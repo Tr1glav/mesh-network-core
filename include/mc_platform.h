@@ -1,0 +1,89 @@
+#pragma once
+
+// ===== Контракт ядро <-> прошивка =====
+// Ядро meshcore (mesh-network-core) содержит только протокол: радио, mesh, крипто,
+// прошивку по радио. Всё, что зависит от конкретной платы, живёт в прошивке и
+// доходит сюда через хуки: экран (mcUi*), батарея (mcBattery*), сеть (mcWifi*),
+// узел-прошивальщик (support*), MQTT/компаньон.
+//
+// В src/mc_platform.cpp лежат слабые реализации по умолчанию (обычно no-op): прошивка
+// переопределяет их сильными. Так ядро собирается даже на платформе, которая не
+// реализует какой-то хук вообще. check: проверять через #ifdef/#if, как и остальные
+// признаки сборки.
+
+#include <Arduino.h>
+
+// ===== ЭКРАН =====
+// Прошивка рисует по своему усмотрению (SSD1306, T-Deck LCD, без экрана — no-op).
+// По умолчанию ничего не делаем; где экран нужен, прошивка переопределяет хук.
+
+// Входящее сообщение канала, которое ядро приняло и расшифровало.
+// path — маршрут ("aa bb .."), пустой — кадр пришёл напрямую.
+void mcUiIncoming(const String& channelName, const String& sender, const String& msg,
+                  float rssi, float snr, int hopCount, const String& path);
+
+// Сообщение сенсорного канала: snsPub — ушло ли оно в MQTT (см. mcMqttPublishSensor).
+void mcUiSensorRx(bool snsPub, float rssi);
+
+// Групповое сообщение, которое не расшифровалось (нет ключа канала): показать hex.
+void mcUiHexScreen(int pktLen, float rssi, float snr, const uint8_t* buffer);
+
+// Применить яркость экрана сразу (команда "bri" из настройки по радио).
+void mcUiSetBrightness(uint8_t bri);
+
+// Mesh OTA, раздающая сторона (координатор/прошивальщик).
+void mcUiOtaAbort(const char* why);
+void mcUiOtaProgress(const String& target, uint32_t pct, uint32_t pkts, float rssi, float snr);
+void mcUiOtaDone(const String& target);
+
+// Mesh OTA, принимающая сторона (узел).
+void mcUiOtaSensorProgress(uint32_t got, uint32_t total, uint32_t pkts, float rssi, float snr);
+void mcUiOtaSensorAbort(const char* why, uint32_t rxFrames, uint32_t rxErr);
+
+// Зажечь экран: используется, когда пришла прошивка и нужно показать её ход.
+void screenWake();
+
+// ===== БАТАРЕЯ (узел) =====
+bool mcBatteryPresent();
+int mcBatteryPercent();      // 0..100; -1 — измерения нет или аккумулятор не подключён
+float mcBatteryVoltage();    // вольты; 0 — платы без измерения батареи
+
+// ===== ПОЗИЦИЯ (GPS) =====
+// Координаты узла в микроградусах для hello: плата с приёмником отвечает true и пишет
+// широту/долготу; без приёмника те поля в heartbeat не дописываются вовсе.
+bool mcBoardPosition(int32_t* latUdeg, int32_t* lonUdeg);
+
+// ===== СЕТЬ (узел-прошивальщик) =====
+// Объявление "support:<адрес>" полезно только когда WiFi поднялся.
+bool mcWifiConnected();
+String mcLocalIp();          // на случай, если прошивке самому знать свой адрес
+
+// ===== MQTT (координатор) =====
+// Опубликовать последнее принятое сообщение (сводный топик координатора) / данные
+// датчика. Реализует прошивка (mqtt.cpp); без MQTT — вызовы отсекаются #ifdef.
+#ifdef MQTT_ENABLED
+void publishMessage();
+bool publishSensorMessage();
+#endif
+
+// ===== КОМПАНЬОН (BLE-приложение) =====
+// Протокол телефонного приложения. Реализует прошивка (companion.cpp); вызовы под
+// #ifdef COMPANION_NODE.
+#ifdef COMPANION_NODE
+void companionOnChannelText(int channelIdx, const String& text, float snr, uint8_t pathLen,
+                            bool notify = true);
+void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
+                       uint8_t pathLen, const uint8_t* path);
+#endif
+
+// ===== УЗЕЛ-ПРОШИВАЛЬЩИК (support) =====
+// Сессию mesh OTA вместо координатора может вести отдельный узел-прошивальщик: он
+// стоит там, где слышно узлы напрямую. Реализует прошивка (support.cpp); пока её нет —
+// слабые заглушки говорят «прошивальщика не существует», и ядро ведёт сессии само.
+enum : uint8_t { SUP_JOB_NONE = 0, SUP_JOB_SELF, SUP_JOB_HANDOFF };
+
+bool supportPresent();
+bool supportHearsDirect(const String& target);
+bool supportBusy();
+bool supportJobStart(uint8_t kind, const String& target);
+bool supportJobFinished(uint8_t& kind, bool& ok, String& target);

@@ -1,0 +1,20 @@
+{
+  "name": "mesh-network-core",
+  "version": "0.1.0",
+  "description": "Meshcore protocol core: radio, mesh routing, messaging and mesh OTA. Platform hooks live in mc_platform.h.",
+  "keywords": "mesh, lora, radio, ota, esp32",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "dependencies": [
+    {
+      "name": "SPI"
+    },
+    {
+      "name": "Wire"
+    },
+    {
+      "name": "RadioLib",
+      "version": "https://github.com/jgromes/RadioLib.git#6d8934836678d8894e3d556550475b37dce3e2b6"
+    }
+  ]
+}
