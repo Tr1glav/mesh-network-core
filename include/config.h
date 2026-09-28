@@ -15,19 +15,6 @@
 #include <time.h>
 #include <Update.h>
 
-#if defined(MQTT_ENABLED) || defined(COMPANION_NODE)
-#include <LittleFS.h>        // компаньон держит в файле список контактов
-#endif
-
-#ifdef MQTT_ENABLED
-#include <WiFi.h>
-#include <PubSubClient.h>
-#include <WebServer.h>
-#include <LittleFS.h>
-#include <esp_sntp.h>
-#include <esp_partition.h>
-#endif
-
 #include "board_config.h"
 // Роли разложены на независимые признаки: features.h выводит их из ролевых флагов,
 // если окружение не задало иначе. Подключается после board_config.h — часть признаков
@@ -35,6 +22,16 @@
 #include "features.h"
 // Имя узла, каналы, WiFi и MQTT берутся из NVS (cfg), а не из build-флагов
 #include "appconfig.h"
+
+// Библиотеки — ПОСЛЕ features.h, чтобы условием были признаки, а не роли. И только те, что
+// нужны самому ядру: WiFi, PubSubClient, WebServer, NTP и таблица разделов отсюда убраны —
+// ядро ими не пользуется ни в одной строке, ими живёт прошивка, и включает она их сама.
+// Раньше они приезжали сюда под #ifdef MQTT_ENABLED, то есть протокол зависел от того,
+// собрана ли в прошивке поддержка брокера.
+#if FEATURE_MESH_OTA_SENDER || FEATURE_COMPANION
+// Раздающая сторона держит образ файлом (/ota.bin), компаньон — список контактов.
+#include <LittleFS.h>
+#endif
 
 // Часовой пояс
 #define TZ_OFFSET_HOURS 3

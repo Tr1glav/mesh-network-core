@@ -116,28 +116,14 @@ extern uint32_t relayForwardedCount;   // чужих флуд-кадров, пе
 extern String logTail;
 extern const char fwMarker[];   // FW_MARKER, зашит в образ для проверки платы
 
-#ifdef MQTT_ENABLED
-extern WiFiClient wifiClient;
-extern PubSubClient mqtt;
-extern char mqttPrefix[64];
-extern bool mqttConnected;
-extern bool wifiConnected;
-extern unsigned long lastMqttReconnectMs;
-extern unsigned long lastStatusPublishMs;
-extern bool wifiConnInProgress;
-extern unsigned long wifiConnStartMs;
-extern bool discoveryPublished;
-extern bool ntpStarted;
-extern bool ntpSyncedLogged;
-extern unsigned long lastNtpSyncMs;
-extern unsigned long lastSensorAvailCheckMs;
-extern unsigned long lastSensorTimeSyncMs;
-extern int mqttTxChannel;
-extern unsigned long lastmsgClearAt;
-extern bool lastmsgPendingClear;
-extern unsigned long snsBtnClearAt;
-extern bool snsBtnPendingClear;
-extern char snsBtnSlug[48];
+// Индекс канала для команд снаружи: ядро выставляет его при разборе каналов, а кто читает
+// этот канал с другой стороны (брокер, приложение, что-то ещё), ядру безразлично.
+extern int txChannelIdx;
+
+// Состояние сессии раздачи прошивки — у того, кто сессию ведёт. WiFi-клиент, PubSubClient,
+// WebServer, NTP и флаги Home Assistant отсюда убраны: ядро ими не пользовалось, они живут
+// в прошивке (её mqtt.h и ota_internal.h).
+#if FEATURE_MESH_OTA_SENDER
 extern uint8_t otaPhase;
 extern String otaTarget;
 extern File otaFile;
@@ -150,11 +136,10 @@ extern uint32_t otaSeq;
 extern uint32_t otaSentBytes;
 extern uint8_t otaRetries;
 extern unsigned long otaSince;
-extern WebServer otaServer;
 extern unsigned long otaWriteCalls;
 extern unsigned long otaWriteBytes;
 extern unsigned long otaWriteSkipped;
-#endif
+#endif // FEATURE_MESH_OTA_SENDER
 
 #ifdef SENSOR_NODE
 extern bool otaActive;

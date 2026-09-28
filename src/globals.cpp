@@ -110,42 +110,16 @@ uint32_t relayForwardedCount = 0;   // чужих флуд-кадров, пер�
 String logTail;
 // used + печать в setup(): иначе линковщик с --gc-sections выбросит строку из образа
 const char fwMarker[] __attribute__((used)) = FW_MARKER;
-#ifdef MQTT_ENABLED
-WiFiClient wifiClient;
-PubSubClient mqtt(wifiClient);
+// Индекс канала, в который уходят команды снаружи (из Home Assistant через брокер).
+// Выставляется при разборе каналов (mesh_channels.cpp) — поэтому и живёт в ядре; кто читает
+// этот канал с другой стороны, ядру безразлично.
+int txChannelIdx = 1;   // по умолчанию #connections
 
-// Префикс топиков: meshcore/bot/{имя узла из настроек}/
-char mqttPrefix[64];
-
-// Состояние
-bool mqttConnected = false;
-bool wifiConnected = false;
-unsigned long lastMqttReconnectMs = 0;
-unsigned long lastStatusPublishMs = 0;
-
-// Неблокирующая машина состояния соединения (WiFi -> MQTT) из loop
-bool wifiConnInProgress = false;
-unsigned long wifiConnStartMs = 0;
-bool discoveryPublished = false;   // discovery бота публикуется один раз
-bool ntpStarted = false;           // SNTP запущен
-bool ntpSyncedLogged = false;      // лог факта синхронизации — один раз
-unsigned long lastNtpSyncMs = 0;
-unsigned long lastSensorAvailCheckMs = 0;
-unsigned long lastSensorTimeSyncMs = 0;
-
-// Выбранный канал для отправки из HA (index в channels[])
-int mqttTxChannel = 1;  // по умолчанию #connections
-
-// Обнуление lastmsg через LASTMSG_RESET_MS после публикации (для повторных триггеров HA)
-unsigned long lastmsgClearAt = 0;
-bool lastmsgPendingClear = false;
-
-// Триггер "button": через SNS_BTN_CLEAR_MS обнуляем text, чтобы повторное нажатие
-// снова вызывало "state_changed" в HA
-unsigned long snsBtnClearAt = 0;
-bool snsBtnPendingClear = false;
-char snsBtnSlug[48];       // slug датчика, текст которого нужно обнулить
-
+// Состояние сессии раздачи прошивки. Признак честный: это нужно тому, кто сессию ВЕДЁТ, а не
+// тому, у кого собран брокер. Раньше весь блок стоял под #ifdef MQTT_ENABLED — вместе с
+// WiFi-клиентом, PubSubClient, WebServer, NTP и флагами Home Assistant, которых ядро не
+// касалось ни в одной строке. Всё это переехало в прошивку (mqtt.cpp, web.cpp).
+#if FEATURE_MESH_OTA_SENDER
 uint8_t otaPhase = OTA_PHASE_IDLE;
 String otaTarget = "";
 File otaFile;               // открытый /ota.bin (LittleFS)
@@ -158,11 +132,10 @@ uint32_t otaSeq = 0;        // первый неподтверждённый ч�
 uint32_t otaSentBytes = 0;  // байт, подтверждённых сенсором
 uint8_t otaRetries = 0;     // повторы подряд без прогресса
 unsigned long otaSince = 0; // millis() последней отправки
-WebServer otaServer(3232);
 unsigned long otaWriteCalls = 0;    // сколько раз вызвали WRITE
 unsigned long otaWriteBytes = 0;    // сколько байт otaFile.write() подтвердил
 unsigned long otaWriteSkipped = 0;  // WRITE-колбэков, где guard не прошёл
-#endif // MQTT_ENABLED
+#endif // FEATURE_MESH_OTA_SENDER
 #ifdef SENSOR_NODE
 bool otaActive = false;     // OTA-сессия идёт (receiving)
 bool otaGotStart = false;   // получили ota:start

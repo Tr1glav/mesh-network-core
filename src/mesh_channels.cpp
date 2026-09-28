@@ -151,7 +151,7 @@ void loadTxChannel() {
     int idx = findChannelByName(cfg.txChannel.c_str());
     if (idx < 0) idx = 1;   // #connections
     if (idx < numChannels) {
-        mqttTxChannel = idx;
+        txChannelIdx = idx;
         Serial.printf("[MQTT] TX channel from config: %s\n", channels[idx].name);
     }
 }
