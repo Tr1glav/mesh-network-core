@@ -22,7 +22,9 @@ String sensorFwVersion[SENSOR_DEV_CACHE_MAX];   // версия прошивки
 String sensorEnv[SENSOR_DEV_CACHE_MAX];         // окружение сборки: по нему берётся файл релиза
 int sensorBattery[SENSOR_DEV_CACHE_MAX];        // заряд % из hello; -1 — сенсор его не шлёт
 float sensorRssi[SENSOR_DEV_CACHE_MAX];         // RSSI последнего пакета от сенсора
-uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];       // хопов до узла; 0 — напрямую, 0xFF — неизвестно
+uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];       // хопов до узла ИЗ ЭФИРА; 0xFF — не слышали
+uint8_t sensorViaSup[SENSOR_DEV_CACHE_MAX];     // кто из прошивальщиков слышит узел (индекс+1)
+float sensorViaRssi[SENSOR_DEV_CACHE_MAX];      // ...и с каким качеством ОН его слышит
 SupportNode supports[SUPPORT_MAX];   // реестр прошивальщиков: имя, адрес, когда объявлялся
 int supportCount = 0;
 
