@@ -97,7 +97,9 @@ void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
 enum : uint8_t { SUP_JOB_NONE = 0, SUP_JOB_SELF, SUP_JOB_HANDOFF };
 
 bool supportPresent();
-bool supportHearsDirect(const String& target);
+// Достаёт ли радио прошивальщика до этого узла (тот же порог, otaHopsReachable): он
+// стоит ближе к дальним узлам, и сессию ведёт он.
+bool supportCanReach(const String& target);
 bool supportBusy();
 bool supportJobStart(uint8_t kind, const String& target);
 bool supportJobFinished(uint8_t& kind, bool& ok, String& target);

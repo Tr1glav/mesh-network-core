@@ -1,6 +1,6 @@
 {
   "name": "mesh-network-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Meshcore protocol core: radio, mesh routing, messaging and mesh OTA. Platform hooks live in mc_platform.h.",
   "keywords": "mesh, lora, radio, ota, esp32",
   "frameworks": "arduino",

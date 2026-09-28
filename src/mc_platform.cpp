@@ -108,7 +108,7 @@ bool supportPresent() {
 }
 
 __attribute__((weak))
-bool supportHearsDirect(const String& target) {
+bool supportCanReach(const String& target) {
     (void)target;
     return false;
 }
