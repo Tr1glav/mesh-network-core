@@ -373,19 +373,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
 
         // === Опрос со страницы OTA: каждый сенсор ответит hello:<версия> со случайной задержкой,
         //     чтобы ответы нескольких сенсоров не столкнулись в эфире ===
-        // Узел-прошивальщик объявил себя: запоминаем адрес, по нему уйдёт образ
-        if (lastMessage.startsWith(SENSOR_MSG_SUPPORT)) {
-            #if FEATURE_MESH_OTA_SENDER
-            String ip = lastMessage.substring(strlen(SENSOR_MSG_SUPPORT));
-            ip.trim();
-            // Их может быть несколько, и ключ реестра — имя узла: объявление второго
-            // прошивальщика больше не затирает первого (раньше глобал был один, и
-            // координатор знал ровно того, кто объявился последним).
-            if (ip.length() >= 7 && ip.length() <= 15) supportSeen(lastSender, ip);
-            #endif
-            return true;
-        }
-
         if (lastMessage == SENSOR_MSG_HELLO_REQ) {
             #ifdef SENSOR_NODE
             // "hello всем": отвечает каждый услышавший. Свои сообщения сюда не доходят —
@@ -396,12 +383,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             // esp_random() — аппаратный ГСЧ, у каждого узла своя пауза.
             sensorHelloDueMs = millis() + HELLO_REPLY_DELAY_MIN_MS +
                 (esp_random() % (HELLO_REPLY_DELAY_MAX_MS - HELLO_REPLY_DELAY_MIN_MS));
-            #if FEATURE_SUPPORT
-            // Прошивальщик к тому же называет свой адрес: опрос — это и есть способ
-            // потребовать его принудительно. В обычное время он молчит, потому что
-            // координатор уже приходил к нему по сети.
-            supportAnnounceDue = true;
-            #endif
             #endif
             return true;
         }

@@ -68,7 +68,6 @@ int supportSeen(const String& name, const String& ip) {
     supports[idx].seenMs = millis();
     return idx;
 }
-bool supportAnnounceDue = false; // опрос "hello?": прошивальщика попросили назвать адрес
 String coordIp = "";            // «вторые уши»: адрес координатора, принимающего /ears
 unsigned long coordSeenMs = 0;
 String otaDelegate = "";        // кому передана сессия; пусто — ведём сами

@@ -50,6 +50,7 @@ static const CfgField FIELDS[] = {
     F_STR("sns_name",  snsName,   false, ""),
     F_STR("sns_key",   snsKey,    true,  ""),
     F_STR("tx_ch",     txChannel, false, "#connections"),
+    F_STR("coord_ip",  coordHost, false, ""),
     F_STR("web_pass",  webPass,   true,  ""),
     F_STR("api_key",   apiKey,    true,  ""),
     F_FLT("lora_freq", loraFreq,  LORA_FREQ, 400, 1000),
