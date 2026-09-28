@@ -35,6 +35,13 @@ struct SupportNode {
     String name;
     String ip;
     unsigned long seenMs;
+    // Версия и окружение прошивальщика. Их координатор берёт не из радио-heartbeat, а из
+    // его же /info по сети: heartbeat приходит раз в десять минут, и до первого из них узел
+    // на странице висел без версии, хотя по сети его можно спросить в любой момент — и
+    // ответ будет точнее, чем запомненный с прошлого раза.
+    String ver;
+    String env;
+    unsigned long infoMs;     // когда последний раз спрашивали /info
 };
 extern SupportNode supports[SUPPORT_MAX];
 extern int supportCount;

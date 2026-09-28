@@ -59,6 +59,10 @@ int supportSeen(const String& name, const String& ip) {
     // адрес действительно сменился (или прошивальщик появился впервые).
     if (supports[idx].ip != ip) {
         supports[idx].ip = ip;
+        // Адрес сменился — узел перезагрузился или переподключился, и версия на нём может
+        // быть уже другой. Спросим заново (supportFetchInfo в прошивке).
+        supports[idx].ver = "";
+        supports[idx].infoMs = 0;
         slog("[SUP] прошивальщик %s на %s\n", name.c_str(), ip.c_str());
     }
     supports[idx].seenMs = millis();
