@@ -96,8 +96,8 @@ void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {
 }
 
 __attribute__((weak))
-bool mcRelayFrameToSupport(const uint8_t* frame, int len) {
-    (void)frame; (void)len;
+bool mcRelayFrameToSupport(const char* supName, const uint8_t* frame, int len) {
+    (void)supName; (void)frame; (void)len;
     return false;
 }
 
@@ -108,9 +108,9 @@ bool supportPresent() {
 }
 
 __attribute__((weak))
-bool supportCanReach(const String& target) {
+int supportIndexFor(const String& target) {
     (void)target;
-    return false;
+    return -1;
 }
 
 __attribute__((weak))
@@ -119,14 +119,14 @@ bool supportBusy() {
 }
 
 __attribute__((weak))
-bool supportJobStart(uint8_t kind, const String& target) {
-    (void)kind; (void)target;
+bool supportJobStart(uint8_t kind, int supIdx, const String& target) {
+    (void)kind; (void)supIdx; (void)target;
     return false;
 }
 
 __attribute__((weak))
-bool supportJobFinished(uint8_t& kind, bool& ok, String& target) {
-    (void)ok; (void)target;
+bool supportJobFinished(uint8_t& kind, bool& ok, String& target, String& who) {
+    (void)ok; (void)target; (void)who;
     kind = SUP_JOB_NONE;
     return false;
 }

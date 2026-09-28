@@ -70,7 +70,7 @@ void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr);
 // только прошивальщик, ответ с радио координатора не услышит. Реализует координатор
 // (POST /radiotx); вернёт false, если прошивальщика нет или сеть молчит, — тогда ядро
 // уходит на обычный локальный флуд.
-bool mcRelayFrameToSupport(const uint8_t* frame, int len);
+bool mcRelayFrameToSupport(const char* supName, const uint8_t* frame, int len);
 
 // ===== MQTT (координатор) =====
 // Опубликовать последнее принятое сообщение (сводный топик координатора) / данные
@@ -96,10 +96,14 @@ void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
 // слабые заглушки говорят «прошивальщика не существует», и ядро ведёт сессии само.
 enum : uint8_t { SUP_JOB_NONE = 0, SUP_JOB_SELF, SUP_JOB_HANDOFF };
 
+// Есть ли в сети хоть один живой прошивальщик.
 bool supportPresent();
-// Достаёт ли радио прошивальщика до этого узла (тот же порог, otaHopsReachable): он
-// стоит ближе к дальним узлам, и сессию ведёт он.
-bool supportCanReach(const String& target);
+// Кто из них дотягивается до этой цели лучше всех (наименьшее число хопов, тот же порог
+// otaHopsReachable) — индекс в supports[] или -1. Спрашивает у каждого по сети, поэтому
+// живёт в прошивке, а не в ядре.
+int supportIndexFor(const String& target);
 bool supportBusy();
-bool supportJobStart(uint8_t kind, const String& target);
-bool supportJobFinished(uint8_t& kind, bool& ok, String& target);
+// Сессию ведёт конкретный прошивальщик: supIdx — индекс в supports[].
+bool supportJobStart(uint8_t kind, int supIdx, const String& target);
+// who — имя того, кто вёл: его показывает страница и по нему ставится otaDelegate.
+bool supportJobFinished(uint8_t& kind, bool& ok, String& target, String& who);

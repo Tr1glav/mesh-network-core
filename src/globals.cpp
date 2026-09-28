@@ -1,5 +1,6 @@
 #include "config.h"
 #include "globals.h"
+#include "ota.h"      // slog: реестр прошивальщиков пишет о смене адреса
 
 unsigned long lastRxDisplay = 0;        // millis() последнего экрана, связанного с приёмом RX
 unsigned long lastDisplayUpdate = 0;    // millis() последнего обновления idle-экрана
@@ -22,9 +23,47 @@ String sensorEnv[SENSOR_DEV_CACHE_MAX];         // окружение сборк
 int sensorBattery[SENSOR_DEV_CACHE_MAX];        // заряд % из hello; -1 — сенсор его не шлёт
 float sensorRssi[SENSOR_DEV_CACHE_MAX];         // RSSI последнего пакета от сенсора
 uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];       // хопов до узла; 0 — напрямую, 0xFF — неизвестно
-String supportName = "";        // узел-прошивальщик: имя из эфира
-String supportIp = "";          // и его адрес в сети; пусто — прошивальщика нет
-unsigned long supportSeenMs = 0;
+SupportNode supports[SUPPORT_MAX];   // реестр прошивальщиков: имя, адрес, когда объявлялся
+int supportCount = 0;
+
+int supportFind(const String& name) {
+    for (int i = 0; i < supportCount; i++)
+        if (supports[i].name == name) return i;
+    return -1;
+}
+
+bool supportLive(int idx) {
+    if (idx < 0 || idx >= supportCount) return false;
+    return supports[idx].ip.length() > 0 &&
+           (millis() - supports[idx].seenMs) < SUPPORT_STALE_MS;
+}
+
+int supportSeen(const String& name, const String& ip) {
+    int idx = supportFind(name);
+    if (idx < 0) {
+        if (supportCount < SUPPORT_MAX) {
+            idx = supportCount++;
+        } else {
+            // Реестр полон: вытесняем того, кто молчит дольше всех. Отказ означал бы, что
+            // новый прошивальщик не появится вовсе — а старый, скорее всего, уже снят.
+            idx = 0;
+            for (int i = 1; i < supportCount; i++)
+                if ((long)(supports[i].seenMs - supports[idx].seenMs) < 0) idx = i;
+            slog("[SUP] реестр полон (%d): '%s' вытеснен узлом '%s'\n",
+                 (int)SUPPORT_MAX, supports[idx].name.c_str(), name.c_str());
+        }
+        supports[idx].name = name;
+        supports[idx].ip = "";
+    }
+    // Объявление приходит с каждым heartbeat, поэтому в журнал оно идёт только когда
+    // адрес действительно сменился (или прошивальщик появился впервые).
+    if (supports[idx].ip != ip) {
+        supports[idx].ip = ip;
+        slog("[SUP] прошивальщик %s на %s\n", name.c_str(), ip.c_str());
+    }
+    supports[idx].seenMs = millis();
+    return idx;
+}
 String coordIp = "";            // «вторые уши»: адрес координатора, принимающего /ears
 unsigned long coordSeenMs = 0;
 String otaDelegate = "";        // кому передана сессия; пусто — ведём сами
@@ -43,6 +82,7 @@ float lastSNR = 0;
 uint8_t lastHopCount = 0;
 int lastChannelIdx = -1;   // индекс канала последнего сообщения (-1 = не определён)
 bool lastRxViaSupport = false;
+String lastRxSupport = "";      // через какой прошивальщик пришёл кадр; пусто — из эфира
 PeerEntry peerCache[PEER_CACHE_MAX];
 uint8_t bot_priv[32];
 uint8_t bot_pub[32];

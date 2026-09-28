@@ -40,6 +40,7 @@ static struct {
     uint8_t dmSrc;              // адресат лички (его короткий хэш)
     int chIdx;                  // канал для группового ответа
     bool viaSupport;            // запрос пришёл через прошивальщика («вторые уши»)
+    char viaName[CFG_NAME_MAX + 1];   // и через какого именно: ответ уйдёт тем же путём
     char text[100];
 } pendingReply;
 
@@ -56,6 +57,7 @@ static void scheduleReply(bool dm, uint8_t dmSrc, int chIdx, const char* text) {
     // Ответ на пинг, пришедший через прошивальщика («вторые уши»), должен уйти туда же:
     // узел, которого слышит только прошивальщик, ответ с радио координатора не услышит.
     pendingReply.viaSupport = lastRxViaSupport;
+    strlcpy(pendingReply.viaName, lastRxSupport.c_str(), sizeof(pendingReply.viaName));
     strlcpy(pendingReply.text, text, sizeof(pendingReply.text));
     pendingReply.dueMs = millis() + random(PING_REPLY_DELAY_MIN_MS, PING_REPLY_DELAY_MAX_MS);
     if (pendingReply.dueMs == 0) pendingReply.dueMs = 1;   // 0 занято признаком «нет заявки»
@@ -82,7 +84,8 @@ void meshReplyTick() {
         if (dl > 0) {
             Serial.printf("\n[TX DM] to <%02X>: %s (%dB, флудом)\n",
                           pendingReply.dmSrc, pendingReply.text, dl);
-            if (pendingReply.viaSupport && mcRelayFrameToSupport(frame, dl)) {
+            if (pendingReply.viaSupport &&
+                mcRelayFrameToSupport(pendingReply.viaName, frame, dl)) {
                 // Ответ ушёл через прошивальщика; наше эхо, вернувшееся от него по радио,
                 // не переиздавать (обычно это делает floodSend через markOwnFrameSeen).
                 markOwnFrameSeen(frame, dl);
@@ -100,7 +103,8 @@ void meshReplyTick() {
         // Пинг из-за «вторых ушей»: кадр ответа уходит прошивальщику, тот передаёт его
         // со своего радио, где слышно отправителя. Хук вернёт false, если прошивальщика
         // нет или сеть молчит, — тогда падаем на обычный локальный флуд.
-        if (pendingReply.viaSupport && mcRelayFrameToSupport(frame, f)) {
+        if (pendingReply.viaSupport &&
+            mcRelayFrameToSupport(pendingReply.viaName, frame, f)) {
             markOwnFrameSeen(frame, f);
         } else {
             floodSend(pendingReply.chIdx, frame, f);
@@ -261,6 +265,7 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     lastSNR = meta.snr;
     lastHopCount = hop_count;
     lastRxViaSupport = (meta.origin == MESH_RX_FORWARDED);
+    lastRxSupport = lastRxViaSupport ? meta.via : String("");
 
     // убираем хвостовые пробелы/переносы (у некоторых клиентов "/ping \n")
     lastMessage.trim();
@@ -368,36 +373,15 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
 
         // === Опрос со страницы OTA: каждый сенсор ответит hello:<версия> со случайной задержкой,
         //     чтобы ответы нескольких сенсоров не столкнулись в эфире ===
-        // «Вторые уши»: координатор объявил свой адрес в сети. Слушает прошивальщик —
-        // он слышит дальние узлы лучше координатора и будет слать ему услышанное по сети.
-        if (lastMessage.startsWith(SENSOR_MSG_COORD)) {
-            #if FEATURE_SUPPORT
-            String ip = lastMessage.substring(strlen(SENSOR_MSG_COORD));
-            ip.trim();
-            if (ip.length() >= 7 && ip.length() <= 15) {
-                bool changed = (coordIp != ip);
-                coordIp = ip;
-                coordSeenMs = millis();
-                if (changed) slog("[COORD] координатор этих ушей на %s\n", coordIp.c_str());
-            }
-            #endif
-            return true;
-        }
-
         // Узел-прошивальщик объявил себя: запоминаем адрес, по нему уйдёт образ
         if (lastMessage.startsWith(SENSOR_MSG_SUPPORT)) {
             #if FEATURE_MESH_OTA_SENDER
             String ip = lastMessage.substring(strlen(SENSOR_MSG_SUPPORT));
             ip.trim();
-            if (ip.length() >= 7 && ip.length() <= 15) {
-                // Объявление приходит с каждым heartbeat и с каждым опросом, поэтому
-                // в журнал оно идёт только когда прошивальщик действительно сменился.
-                bool changed = (supportName != lastSender) || (supportIp != ip);
-                supportName = lastSender;
-                supportIp = ip;
-                supportSeenMs = millis();
-                if (changed) slog("[SUP] прошивальщик %s на %s\n", supportName.c_str(), supportIp.c_str());
-            }
+            // Их может быть несколько, и ключ реестра — имя узла: объявление второго
+            // прошивальщика больше не затирает первого (раньше глобал был один, и
+            // координатор знал ровно того, кто объявился последним).
+            if (ip.length() >= 7 && ip.length() <= 15) supportSeen(lastSender, ip);
             #endif
             return true;
         }

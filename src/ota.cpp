@@ -575,7 +575,7 @@ bool otaStartSession(const String& target) {
     // ретрансляторы их не переносят — они умеют пересылать mesh-пакеты, а не эти. Узел
     // дальше OTA_RADIO_MAX_HOPS не получит ни одного чанка: сессия займёт эфир и кончится
     // таймаутом. Отказать сразу честнее. Поэтому у прошивальщика и спрашивают, достаёт ли
-    // его радио до цели (supportCanReach) — он часто стоит ближе к ней, чем координатор.
+    // его радио до цели (supportIndexFor) — он часто стоит ближе к ней, чем координатор.
     // Сам прошивальщик по радио не шьётся вовсе: у него есть сеть, и образ уходит к нему
     // по ней. Сессия заняла бы эфир почти на минуту ради того, что делается за несколько
     // секунд, — а .otaz он и не примет, на /update нужен сырой образ (его распаковывает
@@ -584,23 +584,31 @@ bool otaStartSession(const String& target) {
     // секунд, а здесь мы стоим в обработчике /ota/start. Пока он не вернётся, веб-сервер
     // не принимает ни одного соединения — страница координатора умирала ровно на то
     // время, пока шьётся прошивальщик. Итог задачи разбирает otaSupportTick.
-    if (target == supportName && supportPresent()) {
-        if (supportJobStart(SUP_JOB_SELF, target)) {
-            snprintf(otaNote, sizeof(otaNote), "шью %s по сети", supportName.c_str());
+    // Цель — сам прошивальщик: его ведёт координатор, и по сети.
+    const int selfIdx = supportFind(target);
+    if (selfIdx >= 0 && supportLive(selfIdx)) {
+        if (supportJobStart(SUP_JOB_SELF, selfIdx, target)) {
+            snprintf(otaNote, sizeof(otaNote), "шью %s по сети", target.c_str());
             return true;
         }
         snprintf(otaLastErr, sizeof(otaLastErr), "не удалось прошить %s по сети",
-                 supportName.c_str());
+                 target.c_str());
         return false;
     }
 
-    if (target != supportName && supportPresent() && supportCanReach(target)) {
-        if (supportJobStart(SUP_JOB_HANDOFF, target)) {
-            snprintf(otaNote, sizeof(otaNote), "передаю образ %s", supportName.c_str());
+    // Иначе сессию отдаём тому прошивальщику, который дотягивается до цели лучше всех.
+    // Их может быть несколько, и «лучше всех» решает не близость к координатору, а хопы
+    // до самой цели: спрашиваем каждого (supportIndexFor).
+    const int supIdx = supportIndexFor(target);
+    if (supIdx >= 0) {
+        if (supportJobStart(SUP_JOB_HANDOFF, supIdx, target)) {
+            snprintf(otaNote, sizeof(otaNote), "передаю образ %s",
+                     supports[supIdx].name.c_str());
             return true;
         }
         // Задача не завелась — не повод отказываться совсем: может, дотянемся сами
-        slog("[OTA] '%s' передать не удалось, пробуем сами\n", supportName.c_str());
+        slog("[OTA] '%s' передать не удалось, пробуем сами\n",
+             supports[supIdx].name.c_str());
     }
 
     return otaStartRadio(target);
@@ -611,16 +619,16 @@ bool otaStartSession(const String& target) {
 void otaSupportTick() {
     uint8_t kind = SUP_JOB_NONE;
     bool ok = false;
-    String target;
-    if (!supportJobFinished(kind, ok, target)) return;
+    String target, who;
+    if (!supportJobFinished(kind, ok, target, who)) return;
 
     if (kind == SUP_JOB_SELF) {
         if (ok) {
-            snprintf(otaNote, sizeof(otaNote), "%s прошит по сети", supportName.c_str());
+            snprintf(otaNote, sizeof(otaNote), "%s прошит по сети", who.c_str());
         } else {
             otaNote[0] = 0;
             snprintf(otaLastErr, sizeof(otaLastErr), "не удалось прошить %s по сети",
-                     supportName.c_str());
+                     who.c_str());
             slog("[OTA] '%s' по сети не прошился; по радио его шить нечем — на /update "
                  "нужен сырой образ\n", target.c_str());
         }
@@ -628,14 +636,16 @@ void otaSupportTick() {
     }
 
     if (ok) {
-        otaDelegate = supportName;
+        // Ведущий — конкретный прошивальщик, и страница спрашивает ход сессии именно у
+        // него: otaDelegate держит имя, по нему находится адрес в реестре.
+        otaDelegate = who;
         otaDelegateMs = millis();
-        snprintf(otaNote, sizeof(otaNote), "сессию ведёт %s", supportName.c_str());
+        snprintf(otaNote, sizeof(otaNote), "сессию ведёт %s", who.c_str());
         return;
     }
     // Не вышло передать — не повод отказываться совсем: может, дотянемся сами
     otaNote[0] = 0;
-    slog("[OTA] '%s' передать не удалось, пробуем сами\n", supportName.c_str());
+    slog("[OTA] '%s' передать не удалось, пробуем сами\n", who.c_str());
     otaStartRadio(target);
 }
 
