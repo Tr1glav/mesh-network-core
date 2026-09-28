@@ -396,6 +396,12 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             // esp_random() — аппаратный ГСЧ, у каждого узла своя пауза.
             sensorHelloDueMs = millis() + HELLO_REPLY_DELAY_MIN_MS +
                 (esp_random() % (HELLO_REPLY_DELAY_MAX_MS - HELLO_REPLY_DELAY_MIN_MS));
+            #if FEATURE_SUPPORT
+            // Прошивальщик к тому же называет свой адрес: опрос — это и есть способ
+            // потребовать его принудительно. В обычное время он молчит, потому что
+            // координатор уже приходил к нему по сети.
+            supportAnnounceDue = true;
+            #endif
             #endif
             return true;
         }
