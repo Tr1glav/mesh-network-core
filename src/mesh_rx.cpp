@@ -404,14 +404,14 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
 
         if (lastMessage == SENSOR_MSG_HELLO_REQ) {
             #ifdef SENSOR_NODE
-            // "hello всем": отвечает каждый услышавший; отправителя исключаем — он сам
-            // знает, что в сети. Arduino random() без зерна даёт всем узлам одну и ту же
-            // серию, и после одновременного опроса ответы ложились бы в один слот;
-            // esp_random() — аппаратный ГСЧ: у каждого узла своя случайная пауза.
-            if (lastSender != cfg.name) {
-                sensorHelloDueMs = millis() + HELLO_REPLY_DELAY_MIN_MS +
-                    (esp_random() % (HELLO_REPLY_DELAY_MAX_MS - HELLO_REPLY_DELAY_MIN_MS));
-            }
+            // "hello всем": отвечает каждый услышавший. Свои сообщения сюда не доходят —
+            // эхо собственного флуда отброшено выше по lastSender == cfg.name.
+            //
+            // Пауза от esp_random(), а не от Arduino random(): без зерна серия у всех узлов
+            // одна и та же, и после одновременного опроса ответы легли бы в один слот.
+            // esp_random() — аппаратный ГСЧ, у каждого узла своя пауза.
+            sensorHelloDueMs = millis() + HELLO_REPLY_DELAY_MIN_MS +
+                (esp_random() % (HELLO_REPLY_DELAY_MAX_MS - HELLO_REPLY_DELAY_MIN_MS));
             #endif
             return true;
         }
