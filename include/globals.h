@@ -32,6 +32,11 @@ extern uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];
 extern String supportName;
 extern String supportIp;
 extern unsigned long supportSeenMs;
+// Координатор, из которого растут «вторые уши»: адрес из объявления "coord:<ip>".
+// Узел-прошивальщик держит его, чтобы слать услышанное по радио по сети; пустой адрес —
+// координатора с /ears в сети нет (или он ещё не объявился).
+extern String coordIp;
+extern unsigned long coordSeenMs;
 // Кому передана текущая сессия; пусто — ведём сами. Пока не пусто, страница координатора
 // показывает ход сессии, спрашивая его у прошивальщика.
 extern String otaDelegate;

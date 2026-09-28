@@ -1,6 +1,7 @@
 #include "config.h"
 #include "globals.h"
 #include "crypto.h"
+#include <esp_random.h>
 #include "radio.h"
 #include "mesh.h"
 #include "ota.h"
@@ -38,6 +39,7 @@ static struct {
     bool dm;                    // отвечаем в личку, а не в канал
     uint8_t dmSrc;              // адресат лички (его короткий хэш)
     int chIdx;                  // канал для группового ответа
+    bool viaSupport;            // запрос пришёл через прошивальщика («вторые уши»)
     char text[100];
 } pendingReply;
 
@@ -51,6 +53,9 @@ static void scheduleReply(bool dm, uint8_t dmSrc, int chIdx, const char* text) {
     pendingReply.dm = dm;
     pendingReply.dmSrc = dmSrc;
     pendingReply.chIdx = chIdx;
+    // Ответ на пинг, пришедший через прошивальщика («вторые уши»), должен уйти туда же:
+    // узел, которого слышит только прошивальщик, ответ с радио координатора не услышит.
+    pendingReply.viaSupport = lastRxViaSupport;
     strlcpy(pendingReply.text, text, sizeof(pendingReply.text));
     pendingReply.dueMs = millis() + random(PING_REPLY_DELAY_MIN_MS, PING_REPLY_DELAY_MAX_MS);
     if (pendingReply.dueMs == 0) pendingReply.dueMs = 1;   // 0 занято признаком «нет заявки»
@@ -77,7 +82,13 @@ void meshReplyTick() {
         if (dl > 0) {
             Serial.printf("\n[TX DM] to <%02X>: %s (%dB, флудом)\n",
                           pendingReply.dmSrc, pendingReply.text, dl);
-            floodSend(-1, frame, dl);
+            if (pendingReply.viaSupport && mcRelayFrameToSupport(frame, dl)) {
+                // Ответ ушёл через прошивальщика; наше эхо, вернувшееся от него по радио,
+                // не переиздавать (обычно это делает floodSend через markOwnFrameSeen).
+                markOwnFrameSeen(frame, dl);
+            } else {
+                floodSend(-1, frame, dl);
+            }
         }
         return;
     }
@@ -86,7 +97,14 @@ void meshReplyTick() {
     if (f > 0) {
         Serial.printf("\n[TX] %s: %s: %s (%dB, флудом)\n", channels[pendingReply.chIdx].name,
                       cfg.name.c_str(), pendingReply.text, f);
-        floodSend(pendingReply.chIdx, frame, f);
+        // Пинг из-за «вторых ушей»: кадр ответа уходит прошивальщику, тот передаёт его
+        // со своего радио, где слышно отправителя. Хук вернёт false, если прошивальщика
+        // нет или сеть молчит, — тогда падаем на обычный локальный флуд.
+        if (pendingReply.viaSupport && mcRelayFrameToSupport(frame, f)) {
+            markOwnFrameSeen(frame, f);
+        } else {
+            floodSend(pendingReply.chIdx, frame, f);
+        }
     }
 }
 #endif  // !SENSOR_NODE
@@ -350,6 +368,22 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
 
         // === Опрос со страницы OTA: каждый сенсор ответит hello:<версия> со случайной задержкой,
         //     чтобы ответы нескольких сенсоров не столкнулись в эфире ===
+        // «Вторые уши»: координатор объявил свой адрес в сети. Слушает прошивальщик —
+        // он слышит дальние узлы лучше координатора и будет слать ему услышанное по сети.
+        if (lastMessage.startsWith(SENSOR_MSG_COORD)) {
+            #if FEATURE_SUPPORT
+            String ip = lastMessage.substring(strlen(SENSOR_MSG_COORD));
+            ip.trim();
+            if (ip.length() >= 7 && ip.length() <= 15) {
+                bool changed = (coordIp != ip);
+                coordIp = ip;
+                coordSeenMs = millis();
+                if (changed) slog("[COORD] координатор этих ушей на %s\n", coordIp.c_str());
+            }
+            #endif
+            return true;
+        }
+
         // Узел-прошивальщик объявил себя: запоминаем адрес, по нему уйдёт образ
         if (lastMessage.startsWith(SENSOR_MSG_SUPPORT)) {
             #if FEATURE_MESH_OTA_SENDER
@@ -370,7 +404,14 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
 
         if (lastMessage == SENSOR_MSG_HELLO_REQ) {
             #ifdef SENSOR_NODE
-            sensorHelloDueMs = millis() + random(HELLO_REPLY_DELAY_MIN_MS, HELLO_REPLY_DELAY_MAX_MS);
+            // "hello всем": отвечает каждый услышавший; отправителя исключаем — он сам
+            // знает, что в сети. Arduino random() без зерна даёт всем узлам одну и ту же
+            // серию, и после одновременного опроса ответы ложились бы в один слот;
+            // esp_random() — аппаратный ГСЧ: у каждого узла своя случайная пауза.
+            if (lastSender != cfg.name) {
+                sensorHelloDueMs = millis() + HELLO_REPLY_DELAY_MIN_MS +
+                    (esp_random() % (HELLO_REPLY_DELAY_MAX_MS - HELLO_REPLY_DELAY_MIN_MS));
+            }
             #endif
             return true;
         }

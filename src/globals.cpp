@@ -25,6 +25,8 @@ uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];       // хопов до узла; 0 �
 String supportName = "";        // узел-прошивальщик: имя из эфира
 String supportIp = "";          // и его адрес в сети; пусто — прошивальщика нет
 unsigned long supportSeenMs = 0;
+String coordIp = "";            // «вторые уши»: адрес координатора, принимающего /ears
+unsigned long coordSeenMs = 0;
 String otaDelegate = "";        // кому передана сессия; пусто — ведём сами
 unsigned long otaDelegateMs = 0;
 char otaNote[64] = "";          // «что произошло»: не ошибка, а сообщение

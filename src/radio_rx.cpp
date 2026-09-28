@@ -55,6 +55,12 @@ void radioRxTick() {
                     // цикл — только ставит в очередь, передаст главный цикл (meshRelayTick).
                     maybeQueueRelay(buffer, pktLen);
 
+                    // «Вторые уши»: свежий кадр можно переслать координатору по сети.
+                    // Хук срабатывает только для радио (forwarded-кадры уже прошли через
+                    // него на другом конце): повторять по WiFi то, что и так пришло по WiFi,
+                    // — замкнутый круг. Дети-подделки вроде отсюда не нужны.
+                    mcOnFreshFrame(buffer, pktLen, rssi, snr);
+
                     MeshRxMeta meta;
                     meta.origin = MESH_RX_RADIO;
                     meta.rssi = rssi;

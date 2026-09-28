@@ -89,6 +89,18 @@ String mcLocalIp() {
     return String("0.0.0.0");
 }
 
+// ===== «ВТОРЫЕ УШИ» =====
+__attribute__((weak))
+void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {
+    (void)buf; (void)len; (void)rssi; (void)snr;
+}
+
+__attribute__((weak))
+bool mcRelayFrameToSupport(const uint8_t* frame, int len) {
+    (void)frame; (void)len;
+    return false;
+}
+
 // ===== УЗЕЛ-ПРОШИВАЛЬЩИК =====
 __attribute__((weak))
 bool supportPresent() {
