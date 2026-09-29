@@ -79,7 +79,7 @@ void radioRxTick() {
                     // не перезатираем экран 5 сек после сообщения
                     if (parsed) {
                         lastRxDisplay = millis();
-                        #ifdef MQTT_ENABLED
+                        #if FEATURE_MQTT
                         publishMessage();
                         #endif
                     }

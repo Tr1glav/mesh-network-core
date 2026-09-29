@@ -91,6 +91,19 @@ extern float lastRSSI;
 extern float lastSNR;
 extern uint8_t lastHopCount;
 extern int lastChannelIdx;
+// Разобранный heartbeat последнего сообщения и его запись в реестре. Разбор делает ядро
+// (sensor_registry.cpp), а прошивка берёт готовые поля: публикация в Home Assistant не
+// должна во второй раз разбирать ту же строку.
+struct SensorHello {
+    String ver, batPct, batVolt, env, lat, lon;
+    bool isHello = false;
+};
+#if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
+extern SensorHello lastHello;
+extern int lastSensorIdx;            // запись отправителя в реестре
+extern bool lastSensorCameOnline;    // ...и он только что вернулся на связь
+#endif
+
 // Кадр пришёл не из эфира, а через форвард «вторых ушей» (MESH_RX_FORWARDED): RSSI/SNR —
 // чужая оценка связи, и «напрямую» (0 хопов от нас) он не означает.
 extern bool lastRxViaSupport;

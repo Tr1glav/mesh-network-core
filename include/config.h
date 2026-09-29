@@ -196,14 +196,14 @@ struct PeerEntry {
 #define ADV_ROUTE_DIRECT 0x02
 #define ADV_ROUTE_FLOOD  0x01
 
-// ===== MQTT / HOME ASSISTANT =====
-#ifdef MQTT_ENABLED
+// ===== СЕТЬ, ВРЕМЯ, HOME ASSISTANT =====
+// Без условия: это числа, они ничего не весят, а под #ifdef MQTT_ENABLED интервал
+// переподключения СЕТИ оказывался недоступен там, где брокера нет, — хотя сеть есть.
+#define NET_RETRY_INTERVAL_MS 5000            // как часто пробуем поднять WiFi (netTick)
 #define MQTT_STATUS_INTERVAL_MS  60000
-#define MQTT_RECONNECT_INTERVAL_MS 5000
 #define NTP_RESYNC_INTERVAL_MS (60UL * 60 * 1000)
 #define LASTMSG_RESET_MS 4000
 #define SNS_BTN_CLEAR_MS 500
-#endif
 
 // ===== STRAZH: LORA AGC rearm =====
 #define RADIO_REARM_INTERVAL_MS 30000

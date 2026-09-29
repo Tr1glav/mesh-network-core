@@ -22,7 +22,7 @@ int channelSetSlot(int idx, const char* name, const uint8_t* key16, bool openKey
 bool channelKeyIsOpen(int idx);
 void loadPrivateChannel();
 void loadSensorChannel();
-#ifdef MQTT_ENABLED
+#if FEATURE_MQTT
 void loadTxChannel();
 #endif
 void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_count, uint8_t path_hash_size);
@@ -54,7 +54,7 @@ bool parseMeshCorePacket(uint8_t* data, int len);
 
 // Откуда пришёл кадр. Для radio метрику приёма даёт само радио; для forwarded — то, что
 // сообщил форвардер по WiFi (хук на «вторые уши»). RSSI/SNR чужие, но это лучшая оценка
-// связи с узлом, которая у нас есть, — publishSensorMessage на них и опирается.
+// связи с узлом, которая у нас есть; реестр узлов на них и опирается.
 enum MeshRxOrigin : uint8_t {
     MESH_RX_RADIO = 0,
     MESH_RX_FORWARDED = 1
@@ -82,9 +82,18 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta);
 void maybeQueueRelay(const uint8_t* data, int len);
 void meshRelayTick();
 
+// Учесть сообщение из сенсорного канала в реестре узлов: обновляет запись отправителя и
+// разбирает heartbeat в lastHello. Публикацией наружу занимается прошивка — она берёт уже
+// разобранное.
+#if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
+void sensorRegistryNote();
+#endif
+
 // forward decls referenced from parseMeshCorePacket
-#ifdef MQTT_ENABLED
+#if FEATURE_MESH_OTA_SENDER
 void otaHandleAck();
+#endif
+#if FEATURE_MQTT
 bool publishSensorMessage();
 #endif
 #ifdef SENSOR_NODE

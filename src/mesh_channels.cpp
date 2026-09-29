@@ -80,7 +80,7 @@ void deriveChannels() {
 
     // Приватный канал: нужен координатору и компаньону — в приложении это обычный
     // чат наравне с остальными, и без него в списке каналов видно только сенсорный.
-    #if defined(MQTT_ENABLED) || defined(COMPANION_NODE)
+    #if FEATURE_MQTT || FEATURE_COMPANION
     loadPrivateChannel();
     #endif
     // Сенсорный канал: нужен и MQTT-боту, и сенсорным платам (без WiFi),
@@ -146,7 +146,7 @@ void loadSensorChannel() {
     setNamedChannel("SNS", "sns_key", cfg.snsName, cfg.snsKey, sensorChannelName, sensorChannelIdx);
 }
 
-#ifdef MQTT_ENABLED
+#if FEATURE_MQTT
 void loadTxChannel() {
     int idx = findChannelByName(cfg.txChannel.c_str());
     if (idx < 0) idx = 1;   // #connections
@@ -155,5 +155,5 @@ void loadTxChannel() {
         Serial.printf("[MQTT] TX channel from config: %s\n", channels[idx].name);
     }
 }
-#endif // MQTT_ENABLED
+#endif // FEATURE_MQTT
 

@@ -21,7 +21,9 @@ void fwScanReset(FwScan* s);
 void fwScanFeed(FwScan* s, const uint8_t* data, size_t n);
 // 1 — образ нашей платы, 0 — маркера нет (сборка старше проверки), -1 — чужая плата
 int fwScanVerdict(const FwScan* s);
-#ifdef MQTT_ENABLED
+// Раздающая сторона прошивки и страница. Объявления вместе: у координатора и прошивальщика
+// есть и то, и другое, а лишнее объявление без определения никому не мешает.
+#if FEATURE_MESH_OTA_SENDER || FEATURE_WEB
 void logGetSnapshot(String& tailOut, uint32_t& totalOut);
 void otaTxGroup(const String& msg);
 void otaBotAbort(const char* why);

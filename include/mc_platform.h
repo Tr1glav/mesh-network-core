@@ -73,9 +73,10 @@ void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr);
 bool mcRelayFrameToSupport(const char* supName, const uint8_t* frame, int len);
 
 // ===== MQTT (координатор) =====
-// Опубликовать последнее принятое сообщение (сводный топик координатора) / данные
-// датчика. Реализует прошивка (mqtt.cpp); без MQTT — вызовы отсекаются #ifdef.
-#ifdef MQTT_ENABLED
+// Опубликовать последнее принятое сообщение (сводный топик координатора) / данные датчика.
+// Реализует прошивка (mqtt.cpp) — и только публикует: реестр узлов и разбор heartbeat живут
+// в ядре (sensor_registry.cpp), а здесь берутся готовыми из lastHello.
+#if FEATURE_MQTT
 void publishMessage();
 bool publishSensorMessage();
 #endif

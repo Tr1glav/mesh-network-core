@@ -316,9 +316,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     if (sensorChannelIdx >= 0 && chIdx == sensorChannelIdx) {
         // === MESH OTA: бот принимает ack, сенсор — чанки/управление ===
         if (lastMessage.startsWith("ota:")) {
-            #ifdef MQTT_ENABLED
+            // Ведущий сессии разбирает подтверждения, принимающий — чанки и управление.
+            // Порядок важен: у прошивальщика есть и то, и другое, и он ведущий.
+            #if FEATURE_MESH_OTA_SENDER
             otaHandleAck();
-            #elif defined(SENSOR_NODE)
+            #elif FEATURE_MESH_OTA_RECEIVER
             otaSensorHandle();
             #endif
             return true;
@@ -330,8 +332,8 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             String rest = lastMessage.substring(4);
             int p = rest.indexOf(':');
             if (p > 0 && rest.substring(0, p) == cfg.name) cfgHandleMeshCfg(rest.substring(p + 1));
-            #elif defined(MQTT_ENABLED)
-            // ответы сенсора видно в журнале на странице, в MQTT их не публикуем
+            #elif FEATURE_WEB
+            // ответы узла видно в журнале на странице, в MQTT их не публикуем
             slog("[CFG] %s: %s\n", lastSender.c_str(), lastMessage.c_str());
             #endif
             return true;
@@ -340,7 +342,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         // === Проверка связи: сенсор шлёт ping:<номер>, координатор сразу отвечает
         //     pong:<номер>:<свой rssi>:<свой snr>, сенсор считает время обмена ===
         if (lastMessage.startsWith(SENSOR_MSG_PING)) {
-            #ifdef MQTT_ENABLED
+            // Признак выбран так, чтобы поведение не изменилось: сегодня на пинг отвечают
+            // ОБА — и координатор, и прошивальщик (у обоих был MQTT_ENABLED), а сенсор
+            // принимает первый пришедший ответ. То есть «проверка связи с координатором»
+            // может измерять связь с прошивальщиком. Это отдельный вопрос, не рефакторинга.
+            #if FEATURE_MESH_OTA_SENDER
             char reply[48];
             snprintf(reply, sizeof(reply), "%s%s:%d:%d", SENSOR_MSG_PONG,
                      lastMessage.c_str() + strlen(SENSOR_MSG_PING),
@@ -414,11 +420,16 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 Serial.printf("[RTC] SYNCED from channel: %s\n", tbuf);
             }
         }
-        #ifdef MQTT_ENABLED
+        // Реестр — дело ядра и не зависит от того, есть ли куда публиковать: по нему
+        // выбирается цель прошивки, и он же отвечает на вопрос «кого мы слышим».
+        #if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
+        sensorRegistryNote();
+        #endif
+        #if FEATURE_MQTT
         bool snsPub = publishSensorMessage();
         mcUiSensorRx(snsPub, lastRSSI);
         #else
-        Serial.printf("[SNS] %s: %s (MQTT disabled)\n", lastSender.c_str(), lastMessage.c_str());
+        Serial.printf("[SNS] %s: %s\n", lastSender.c_str(), lastMessage.c_str());
         #endif
         return true;
     }
