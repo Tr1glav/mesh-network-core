@@ -8,7 +8,10 @@
 #include <mbedtls/aes.h>
 #include <mbedtls/base64.h>
 #include <Ed25519.h>
-#include <ed_25519.h>
+// Тот же заголовок, что и в crypto.h, — путём от src/, а не как <ed_25519.h>. В форме с
+// угловыми скобками файл искался в include-пути сборки, и в каждой прошивке приходилось
+// держать свою копию в lib/: она молча расходилась с этим файлом при правке ядра.
+#include "ed25519/ed_25519.h"
 #include <string.h>
 #include <stdarg.h>
 #include <sys/time.h>
