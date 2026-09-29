@@ -114,6 +114,12 @@ int supportIndexFor(const String& target) {
 }
 
 __attribute__((weak))
+int supportIndexForAny(const String& target) {
+    (void)target;
+    return -1;
+}
+
+__attribute__((weak))
 bool supportBusy() {
     return false;
 }

@@ -95,7 +95,10 @@ void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
 // Сессию mesh OTA вместо координатора может вести отдельный узел-прошивальщик: он
 // стоит там, где слышно узлы напрямую. Реализует прошивка (support.cpp); пока её нет —
 // слабые заглушки говорят «прошивальщика не существует», и ядро ведёт сессии само.
-enum : uint8_t { SUP_JOB_NONE = 0, SUP_JOB_SELF, SUP_JOB_HANDOFF };
+// SUP_JOB_SLOW — та же передача образа, но командой начать МЕДЛЕННУЮ сессию. Смысл тот же,
+// что у обычной передачи, и причина та же, только сильнее: медленная сессия занимает ведущего
+// на часы, и координатор всё это время не отвечал бы ни на MQTT, ни на страницу, ни на время.
+enum : uint8_t { SUP_JOB_NONE = 0, SUP_JOB_SELF, SUP_JOB_HANDOFF, SUP_JOB_SLOW };
 
 // Есть ли в сети хоть один живой прошивальщик.
 bool supportPresent();
@@ -103,6 +106,10 @@ bool supportPresent();
 // otaHopsReachable) — индекс в supports[] или -1. Спрашивает у каждого по сети, поэтому
 // живёт в прошивке, а не в ядре.
 int supportIndexFor(const String& target);
+// Кто может вести медленную сессию к этой цели. Хопы здесь не спрашиваются: медленный режим
+// едет обычными сообщениями и доходит туда же, куда доходит сеть, — важно лишь, что ведущий
+// жив и что цель не он сам.
+int supportIndexForAny(const String& target);
 bool supportBusy();
 // Сессию ведёт конкретный прошивальщик: supIdx — индекс в supports[].
 bool supportJobStart(uint8_t kind, int supIdx, const String& target);

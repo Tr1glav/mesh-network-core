@@ -3,6 +3,7 @@
 #include "crypto.h"
 #include "mesh.h"
 #include "ota.h"
+#include <esp_random.h>   // разброс паузы перед подтверждением
 
 // ===== МЕДЛЕННЫЙ РЕЖИМ: ПРОШИВКА ПО САМОМУ MESHCORE =====
 //
@@ -25,6 +26,17 @@
 #if FEATURE_MESH_OTA_SENDER
 
 static File otaSlowFile;
+
+// Экран ведущего. Хук тот же, что у быстрого режима: человеку не нужно различать режимы по
+// виду экрана. Не чаще OTA_DRAW_MS — перерисовка OLED по I2C стоит около 25 мс.
+static void otaSlowDraw() {
+    static uint32_t lastDraw = 0;
+    if (millis() - lastDraw < OTA_DRAW_MS) return;
+    lastDraw = millis();
+    uint32_t pct = otaSlowChunks ? (otaSlowAcked * 100 / otaSlowChunks) : 0;
+    if (pct > 100) pct = 100;
+    mcUiOtaProgress(otaSlowTarget, pct, otaSlowAcked, lastRSSI, lastSNR);
+}
 bool otaSlowFinishedOk = false;   // итог последней медленной сессии — только для страницы
 
 // Чанк по номеру: читаем из /ota.bin (это .otaz — заголовок плюс сжатый поток) и шлём как
@@ -42,6 +54,7 @@ void otaSlowAbort(const char* why) {
     otaSlowOn = false;
     if (otaSlowFile) { otaSlowFile.close(); otaSlowFile = File(); }
     snprintf(otaLastErr, sizeof(otaLastErr), "медленный режим: %s", why);
+    mcUiOtaAbort(why);
     slog("[SLOW] прервано: %s\n", why);
     char msg[48];
     snprintf(msg, sizeof(msg), "%s%s", OTA_SLOW_MSG_FAIL, why);
@@ -100,6 +113,7 @@ void otaSlowOnAck(uint32_t next) {
         otaSlowRetries = 0;
         otaSlowNextMs = millis();     // окно подтверждено — шлём следующее без паузы
         otaSlowAckMs = 0;
+        otaSlowDraw();
         slog("[SLOW] подтверждено %u из %u\n", (unsigned)next, (unsigned)otaSlowChunks);
     } else if (next == otaSlowSeq) {
         // Узел ждёт то же, что мы и шлём: значит окно до него не дошло. Повторяем сразу, не
@@ -116,6 +130,7 @@ void otaSlowDone(bool ok, const char* why) {
     if (otaSlowFile) { otaSlowFile.close(); otaSlowFile = File(); }
     if (ok) {
         otaSlowAcked = otaSlowChunks;
+        mcUiOtaDone(otaSlowTarget);
         snprintf(otaNote, sizeof(otaNote), "%s прошит по каналу", otaSlowTarget.c_str());
         slog("[SLOW] ГОТОВО: %s применил образ\n", otaSlowTarget.c_str());
     } else {
@@ -128,7 +143,8 @@ void otaSlowDone(bool ok, const char* why) {
 void otaSlowTick() {
     if (!otaSlowOn) return;
 
-    // Ждём подтверждения окна.
+    // Фаза ответа: МОЛЧИМ до конца окна. Это и есть маятник — пока идёт очередь узла, мы не
+    // отправляем ничего, даже если следующий чанк давно готов.
     if (otaSlowAckMs != 0) {
         if ((long)(millis() - otaSlowAckMs) < 0) return;
         if (++otaSlowRetries > OTA_SLOW_MAX_RETRIES) {
@@ -174,6 +190,7 @@ void otaSlowTick() {
     sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
 
     sent++;
+    otaSlowDraw();
     if (sent >= inWindow || sent >= otaSlowChunks) {
         // Окно кончилось — ждём подтверждения.
         otaSlowAckMs = millis() + OTA_SLOW_ACK_TIMEOUT_MS;
@@ -194,8 +211,28 @@ void otaSlowTick() {
 static uint32_t slowRxExpect = 0;      // какой чанк ждём
 static unsigned long slowRxLastMs = 0; // когда пришёл последний
 static bool slowRxOn = false;
+static unsigned long slowRxAckDueMs = 0;   // когда отправить отложенное подтверждение
 
-static void slowRxAck() {
+// Экран принимающего узла: otaGot/otaTotal ведёт поток (обёртки в ota_receiver.cpp), поэтому
+// и OLED, и раздел T-Deck показывают ход одинаково в обоих режимах.
+static void slowRxDraw() {
+    static uint32_t lastDraw = 0;
+    if (millis() - lastDraw < OTA_DRAW_MS) return;
+    lastDraw = millis();
+    mcUiOtaSensorProgress(otaGot, otaTotal, (uint32_t)packetCount, lastRSSI, lastSNR);
+}
+
+// Подтверждение уходит НЕ сразу, а через паузу: эфир после чанка ещё занят второй копией
+// флуда и работой ретрансляторов, и мгновенный ответ ведущий просто не слышит. Заявка
+// ставится здесь, отправляет её otaSlowRxTick.
+static void slowRxAckLater() {
+    if (slowRxAckDueMs != 0) return;    // заявка уже стоит — не двигаем её вперёд
+    slowRxAckDueMs = millis() + OTA_SLOW_ACK_DELAY_MS + (esp_random() % OTA_SLOW_ACK_JITTER_MS);
+    if (slowRxAckDueMs == 0) slowRxAckDueMs = 1;   // 0 занято признаком «заявки нет»
+}
+
+static void slowRxAckNow() {
+    slowRxAckDueMs = 0;
     char msg[32];
     snprintf(msg, sizeof(msg), "%s%u", OTA_SLOW_MSG_ACK, (unsigned)slowRxExpect);
     sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
@@ -209,6 +246,7 @@ void otaSlowRxAbort(const char* why) {
     char msg[48];
     snprintf(msg, sizeof(msg), "%s%s", OTA_SLOW_MSG_FAIL, why);
     sensorSendMsg(msg);
+    mcUiOtaSensorAbort(why, 0, 0);
     Serial.printf("[SLOW] приём прерван: %s\n", why);
 }
 
@@ -230,6 +268,7 @@ void otaSlowRxStart(const String& args) {
         return;
     }
     slowRxExpect = 0;
+    slowRxAckDueMs = 0;
     slowRxOn = true;
     otaSlowOn = true;
     slowRxLastMs = millis();
@@ -237,7 +276,7 @@ void otaSlowRxStart(const String& args) {
     screenWake();
     #endif
     Serial.printf("[SLOW] приём: %u байт, %u чанков\n", (unsigned)otaSlowTotal, (unsigned)otaSlowChunks);
-    slowRxAck();   // сразу говорим, с чего начинать
+    slowRxAckLater();   // говорим, с чего начинать — но не в занятый эфир
 }
 
 // "osd:<seq>:<base64>"
@@ -252,7 +291,7 @@ void otaSlowRxData(const String& args) {
     // Записать его некуда — поток разворачивается строго по порядку, — поэтому просто
     // напоминаем отправителю, с чего продолжать.
     if (seq != slowRxExpect) {
-        if (seq > slowRxExpect) slowRxAck();
+        if (seq > slowRxExpect) slowRxAckLater();
         return;
     }
 
@@ -269,12 +308,14 @@ void otaSlowRxData(const String& args) {
         return;
     }
     slowRxExpect = seq + 1;
+    slowRxDraw();
 
     // Подтверждаем на границе окна и на последнем чанке: подтверждать каждый — значит
     // занять эфир ответами вдвое плотнее, чем данными.
-    if (slowRxExpect >= otaSlowChunks || (slowRxExpect % OTA_SLOW_WINDOW) == 0) slowRxAck();
+    if (slowRxExpect >= otaSlowChunks || (slowRxExpect % OTA_SLOW_WINDOW) == 0) slowRxAckLater();
 
     if (slowRxExpect >= otaSlowChunks) {
+        slowRxAckNow();       // последнее подтверждение шлём без паузы: ждать уже нечего
         slowRxOn = false;
         otaSlowOn = false;
         const bool ok = otaSlowStreamEnd(true);
@@ -294,6 +335,8 @@ void otaSlowRxData(const String& args) {
 // Сторож: отправитель мог перезагрузиться, и держать раздел открытым вечно незачем.
 void otaSlowRxTick() {
     if (!slowRxOn) return;
+    // Отложенное подтверждение: пауза дана, чтобы эфир освободился от чанка и его повторов.
+    if (slowRxAckDueMs != 0 && (long)(millis() - slowRxAckDueMs) >= 0) slowRxAckNow();
     if (millis() - slowRxLastMs < OTA_SLOW_STALL_MS) return;
     otaSlowRxAbort("тишина в канале");
 }

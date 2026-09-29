@@ -567,6 +567,23 @@ bool otaStartSessionSlow(const String& target) {
     if (!otaFwReady || target.length() == 0 || target.length() > CFG_NAME_MAX) return false;
     otaNote[0] = 0;
     otaDelegate = "";
+
+    // Ведёт прошивальщик, если он есть. Сессия занимает ведущего на ЧАСЫ: координатор всё это
+    // время не обслуживал бы ни брокер, ни страницу, ни рассылку времени — а он же в сети
+    // один. Прошивальщик для того и поставлен, и таких узлов может быть несколько.
+    //
+    // Себя самого ему не поручаем: прошивальщик не может вести сессию, где цель — он сам.
+    const int supIdx = supportIndexForAny(target);
+    if (supIdx >= 0) {
+        if (supportJobStart(SUP_JOB_SLOW, supIdx, target)) {
+            snprintf(otaNote, sizeof(otaNote), "передаю образ %s: медленный режим",
+                     supports[supIdx].name.c_str());
+            return true;
+        }
+        slog("[OTA] '%s' передать не удалось, медленный режим ведём сами\n",
+             supports[supIdx].name.c_str());
+    }
+
     if (!otaSlowStart(target)) return false;
     snprintf(otaNote, sizeof(otaNote), "%s: медленный режим принудительно", target.c_str());
     return true;
