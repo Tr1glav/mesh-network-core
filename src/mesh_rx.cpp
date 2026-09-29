@@ -369,6 +369,13 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             if (pingSentMs != 0 && id == pingId) {
                 pingRttMs = millis() - pingSentMs;
                 pingSentMs = 0;
+                // Выборка режима: разброс времени ответа говорит о связи больше, чем одно
+                // измерение. Второй ответ на тот же запрос (отвечают оба) сюда не попадёт —
+                // pingSentMs уже обнулён.
+                if (pingStatRecv < 0xFFFF) pingStatRecv++;
+                if (pingRttMin == 0 || pingRttMs < pingRttMin) pingRttMin = pingRttMs;
+                if (pingRttMs > pingRttMax) pingRttMax = pingRttMs;
+                pingRttSum += pingRttMs;
                 pingRssi = lastRSSI;
                 pingSnr = lastSNR;
                 pingHops = lastHopCount;

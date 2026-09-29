@@ -39,8 +39,12 @@ void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs = FLOO
 void sensorSendMsg(const char* msg, unsigned int gapMs = FLOOD_RETRY_MS, int repeats = 2);
 #ifdef SENSOR_NODE
 void sensorSendHello();
-void sensorPingSend();   // эхо-запрос к координатору (тройное нажатие)
-void sensorPingTick();   // сторож ожидания ответа
+void sensorPingSend();      // один эхо-запрос
+void sensorPingTick();      // сторож ожидания ответа и расписание режима
+// Включить или выключить режим проверки доступности. При включении статистика обнуляется и
+// первый запрос уходит сразу; при выключении последняя выборка остаётся на экране
+// PING_SHOW_MS, чтобы её можно было прочитать.
+void pingModeToggle();
 #endif
 #ifndef SENSOR_NODE
 // Отложенный ответ на пинг/личку: заявку ставит разбор пакета, отправляет главный цикл.

@@ -199,16 +199,55 @@ void sensorPingSend() {
     char msg[24];
     snprintf(msg, sizeof(msg), "%s%u", SENSOR_MSG_PING, (unsigned)pingId);
     pingSentMs = millis();
+    if (pingStatSent < 0xFFFF) pingStatSent++;
     sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
 }
 
+void pingModeToggle() {
+    if (pingModeOn) {
+        pingModeOn = false;
+        // Последняя выборка остаётся на экране: иначе выключение стирало бы то, ради чего
+        // режим и включали.
+        pingShowUntil = millis() + PING_SHOW_MS;
+        Serial.printf("[PING] режим выключен: ушло %u, потеряно %u\n",
+                      (unsigned)pingStatSent, (unsigned)(pingStatSent - pingStatRecv));
+        return;
+    }
+    pingModeOn = true;
+    pingModeStartMs = millis();
+    pingStatSent = pingStatRecv = 0;
+    pingRttMin = pingRttMax = pingRttSum = 0;
+    pingFailed = false;
+    pingShowUntil = 0;
+    pingModeNextMs = millis();   // первый запрос — сразу
+    Serial.println("[PING] режим включён");
+}
+
 void sensorPingTick() {
-    if (pingSentMs == 0) return;
-    if (millis() - pingSentMs < PING_TIMEOUT_MS) return;
-    pingSentMs = 0;
-    pingFailed = true;
-    pingShowUntil = millis() + PING_SHOW_MS;
-    Serial.println("[PING] ответа нет");
+    // Ждали ответ и не дождались: в режиме это просто потеря в выборке, вне режима — всё,
+    // что мы узнали, и его показывает экран.
+    if (pingSentMs != 0 && millis() - pingSentMs >= PING_TIMEOUT_MS) {
+        pingSentMs = 0;
+        pingFailed = true;
+        if (!pingModeOn) pingShowUntil = millis() + PING_SHOW_MS;
+        Serial.println("[PING] ответа нет");
+    }
+    if (!pingModeOn) return;
+    // «Включили и ушли»: режим сам выключится, не посадив аккумулятор.
+    if (millis() - pingModeStartMs >= PING_MODE_MAX_MS) {
+        Serial.println("[PING] предел режима — выключаю");
+        pingModeToggle();
+        return;
+    }
+    // Во время прошивки по радио эфир занят чанками: запрос туда не полезет, расписание
+    // сдвинется само.
+    if (otaActive) { pingModeNextMs = millis() + PING_MODE_INTERVAL_MS; return; }
+    if ((long)(millis() - pingModeNextMs) < 0) return;
+    pingModeNextMs = millis() + PING_MODE_INTERVAL_MS;
+    #if HAS_OLED
+    screenWake();   // экран не должен уснуть посреди проверки — на него и смотрят
+    #endif
+    sensorPingSend();
 }
 #endif
 

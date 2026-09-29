@@ -179,5 +179,13 @@ extern float pingRssi, pingSnr;     // как сенсор слышит отве
 extern int pingPeerRssi;            // как координатор слышит сенсор (из ответа)
 extern uint8_t pingHops;            // через сколько ретрансляторов пришёл ответ
 extern unsigned long pingShowUntil; // до какого времени держать результат на экране
-extern bool pingFailed;             // ответа не было
+extern bool pingFailed;             // ответа на последний запрос не было
+// Режим проверки доступности: запросы идут подряд, экран показывает выборку. Включается и
+// выключается тем же действием, которым раньше посылался одиночный запрос.
+extern bool pingModeOn;
+extern unsigned long pingModeNextMs;  // когда уйдёт следующий запрос
+extern unsigned long pingModeStartMs; // когда включили — по нему срабатывает предел
+extern uint16_t pingStatSent;         // ушло запросов за сессию режима
+extern uint16_t pingStatRecv;         // на сколько пришёл ответ; разница — потери
+extern unsigned long pingRttMin, pingRttMax, pingRttSum;   // разброс времени ответа
 #endif
