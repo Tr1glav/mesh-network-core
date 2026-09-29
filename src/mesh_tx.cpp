@@ -210,13 +210,15 @@ void pingModeToggle() {
         // режим и включали.
         pingShowUntil = millis() + PING_SHOW_MS;
         Serial.printf("[PING] режим выключен: ушло %u, потеряно %u\n",
-                      (unsigned)pingStatSent, (unsigned)(pingStatSent - pingStatRecv));
+                      (unsigned)pingStatSent, (unsigned)pingStatLost);
         return;
     }
     pingModeOn = true;
     pingModeStartMs = millis();
-    pingStatSent = pingStatRecv = 0;
+    pingStatSent = pingStatRecv = pingStatLost = 0;
     pingRttMin = pingRttMax = pingRttSum = 0;
+    pingHopsMin = pingHopsMax = 0;
+    pingHopsSum = 0;
     pingFailed = false;
     pingShowUntil = 0;
     pingModeNextMs = millis();   // первый запрос — сразу
@@ -229,6 +231,9 @@ void sensorPingTick() {
     if (pingSentMs != 0 && millis() - pingSentMs >= PING_TIMEOUT_MS) {
         pingSentMs = 0;
         pingFailed = true;
+        // Вот теперь запрос действительно потерян: ждать его больше не будем, а следующий
+        // уйдёт по расписанию. До этого момента он просто в пути.
+        if (pingStatLost < 0xFFFF) pingStatLost++;
         if (!pingModeOn) pingShowUntil = millis() + PING_SHOW_MS;
         Serial.println("[PING] ответа нет");
     }

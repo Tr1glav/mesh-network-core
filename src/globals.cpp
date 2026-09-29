@@ -164,5 +164,8 @@ unsigned long pingModeNextMs = 0;
 unsigned long pingModeStartMs = 0;
 uint16_t pingStatSent = 0;
 uint16_t pingStatRecv = 0;
+uint16_t pingStatLost = 0;
 unsigned long pingRttMin = 0, pingRttMax = 0, pingRttSum = 0;
+uint8_t pingHopsMin = 0, pingHopsMax = 0;
+unsigned long pingHopsSum = 0;
 #endif // SENSOR_NODE

@@ -186,6 +186,14 @@ extern bool pingModeOn;
 extern unsigned long pingModeNextMs;  // когда уйдёт следующий запрос
 extern unsigned long pingModeStartMs; // когда включили — по нему срабатывает предел
 extern uint16_t pingStatSent;         // ушло запросов за сессию режима
-extern uint16_t pingStatRecv;         // на сколько пришёл ответ; разница — потери
+extern uint16_t pingStatRecv;         // на сколько пришёл ответ
+// Потери считаются отдельным счётчиком, а не как «отправлено минус отвеченные»: запрос,
+// который ещё в пути, в такой разнице выглядел бы потерянным, и на экране мелькала бы
+// потеря, которой нет. Здесь потеря — это сработавший таймаут ожидания.
+extern uint16_t pingStatLost;
 extern unsigned long pingRttMin, pingRttMax, pingRttSum;   // разброс времени ответа
+// Разброс числа ретрансляторов за сессию. Хопы скачут там, где маршрут неустойчив: ответ то
+// приходит напрямую, то через соседа, — и по одному последнему значению этого не видно.
+extern uint8_t pingHopsMin, pingHopsMax;
+extern unsigned long pingHopsSum;
 #endif

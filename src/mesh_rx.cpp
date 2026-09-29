@@ -373,9 +373,19 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 // измерение. Второй ответ на тот же запрос (отвечают оба) сюда не попадёт —
                 // pingSentMs уже обнулён.
                 if (pingStatRecv < 0xFFFF) pingStatRecv++;
-                if (pingRttMin == 0 || pingRttMs < pingRttMin) pingRttMin = pingRttMs;
-                if (pingRttMs > pingRttMax) pingRttMax = pingRttMs;
+                // У хопов ноль — законное значение («напрямую»), поэтому первый ответ
+                // задаёт обе границы, а не сравнивается с нулевой заготовкой.
+                if (pingStatRecv == 1) {
+                    pingRttMin = pingRttMax = pingRttMs;
+                    pingHopsMin = pingHopsMax = lastHopCount;
+                } else {
+                    if (pingRttMs < pingRttMin) pingRttMin = pingRttMs;
+                    if (pingRttMs > pingRttMax) pingRttMax = pingRttMs;
+                    if (lastHopCount < pingHopsMin) pingHopsMin = lastHopCount;
+                    if (lastHopCount > pingHopsMax) pingHopsMax = lastHopCount;
+                }
                 pingRttSum += pingRttMs;
+                pingHopsSum += lastHopCount;
                 pingRssi = lastRSSI;
                 pingSnr = lastSNR;
                 pingHops = lastHopCount;
