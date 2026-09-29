@@ -66,6 +66,7 @@ bool otaStartSessionSlow(const String& target);
 void otaSlowTick();                       // шаг отправителя, из главного цикла
 void otaSlowOnAck(uint32_t next);         // подтверждение узла: «жду чанк N»
 void otaSlowDone(bool ok, const char* why);
+extern bool otaSlowFinishedOk;            // итог последней медленной сессии (для страницы)
 void otaSlowAbort(const char* why);
 #endif
 #if FEATURE_MESH_OTA_RECEIVER

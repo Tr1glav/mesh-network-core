@@ -25,6 +25,7 @@
 #if FEATURE_MESH_OTA_SENDER
 
 static File otaSlowFile;
+bool otaSlowFinishedOk = false;   // итог последней медленной сессии — только для страницы
 
 // Чанк по номеру: читаем из /ota.bin (это .otaz — заголовок плюс сжатый поток) и шлём как
 // есть. Узел разворачивает поток тем же распаковщиком, что и в быстром режиме, поэтому
@@ -40,7 +41,6 @@ void otaSlowAbort(const char* why) {
     if (!otaSlowOn) return;
     otaSlowOn = false;
     if (otaSlowFile) { otaSlowFile.close(); otaSlowFile = File(); }
-    otaPhase = OTA_PHASE_IDLE;
     snprintf(otaLastErr, sizeof(otaLastErr), "медленный режим: %s", why);
     slog("[SLOW] прервано: %s\n", why);
     char msg[48];
@@ -70,10 +70,15 @@ bool otaSlowStart(const String& target) {
     otaSlowAcked   = 0;
     otaSlowRetries = 0;
     otaSlowOn      = true;
+    otaSlowFinishedOk = false;   // итог прошлой сессии больше не показываем
     otaSlowNextMs  = millis();
     otaSlowAckMs   = 0;
     otaLastErr[0]  = 0;
-    otaPhase = OTA_PHASE_DATA;   // страница показывает ход как у обычной сессии
+    // otaPhase НЕ трогаем. По нему работает машина быстрого режима: увидев OTA_PHASE_DATA,
+    // otaBotTick решает, что идёт его сессия, и начинает опрашивать узел — с otaSeq, который
+    // остался от прошлой прошивки. В журнале это выглядело как «[SLOW] старт», а следом
+    // «[OTA] poll seq=1158» и «abort (no response)»: медленная сессия будила быструю, и та
+    // её же и убивала. Ход медленного режима страница берёт из otaSlow* напрямую.
 
     char msg[96];
     snprintf(msg, sizeof(msg), "%s%s:%u:%08X:%u", OTA_SLOW_MSG_START, target.c_str(),
@@ -107,8 +112,8 @@ void otaSlowOnAck(uint32_t next) {
 void otaSlowDone(bool ok, const char* why) {
     if (!otaSlowOn) return;
     otaSlowOn = false;
+    otaSlowFinishedOk = ok;   // страница покажет итог, не трогая фазу быстрого режима
     if (otaSlowFile) { otaSlowFile.close(); otaSlowFile = File(); }
-    otaPhase = ok ? OTA_PHASE_DONE : OTA_PHASE_IDLE;
     if (ok) {
         otaSlowAcked = otaSlowChunks;
         snprintf(otaNote, sizeof(otaNote), "%s прошит по каналу", otaSlowTarget.c_str());

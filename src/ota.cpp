@@ -549,6 +549,12 @@ static bool otaStartRadio(const String& target) {
 // путь надо — иначе режим, которым шьют самые труднодоступные узлы, испытывается только
 // тогда, когда что-то сломалось.
 bool otaStartSessionSlow(const String& target) {
+    // Своя проверка, а не только по фазе: медленный режим фазу быстрого не занимает
+    // (он её вообще не трогает), поэтому «уже идёт» надо спрашивать у него самого.
+    if (otaSlowOn) {
+        strlcpy(otaLastErr, "медленная сессия уже идёт", sizeof(otaLastErr));
+        return false;
+    }
     if (otaPhase != OTA_PHASE_IDLE && otaPhase != OTA_PHASE_DONE) return false;
     if (supportBusy()) {
         strlcpy(otaLastErr, "идёт передача прошивальщику", sizeof(otaLastErr));
