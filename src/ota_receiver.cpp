@@ -311,4 +311,64 @@ void otaSensorHandle() {
 }
 
 
+// ===== ПОТОК ДЛЯ МЕДЛЕННОГО РЕЖИМА =====
+// Медленный режим (ota_slow.cpp) отличается только доставкой: вместо сырых FSK-кадров чанки
+// приезжают обычными сообщениями канала. Разворачивание потока, запись во флеш, подсчёт CRC
+// и проверка маркера платы у него те же — поэтому здесь не новая механика, а три обёртки
+// над той, что уже обслуживает быстрый режим. Дублировать её значило бы чинить распаковку
+// дважды.
+#if FEATURE_MESH_OTA_RECEIVER
+
+bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
+    if (otaActive) return false;          // быстрая сессия уже идёт
+    otaTotal = total;
+    otaCrcExp = crc;
+    otaGot = 0;
+    otaCrcAcc = 0xFFFFFFFF;
+    otaDictOfs = 0;
+    fwScanReset(&otaImgScan);
+    otaZFree();
+    otaInfl = (tinfl_decompressor*)malloc(sizeof(tinfl_decompressor));
+    otaDict = (uint8_t*)malloc(TINFL_LZ_DICT_SIZE);
+    if (!otaInfl || !otaDict) { otaZFree(); return false; }
+    tinfl_init(otaInfl);
+    if (!Update.begin(total)) {
+        Update.printError(Serial);
+        otaZFree();
+        return false;
+    }
+    // Частоту не трогаем и радио не переключаем: чанки идут обычными сообщениями, и узел
+    // всё это время остаётся на связи — в отличие от быстрого режима, где он глух ко всему.
+    return true;
+}
+
+bool otaSlowStreamFeed(const uint8_t* data, size_t n, bool last) {
+    if (!otaInfl || !otaDict) return false;
+    return otaFeed(data, n, last);
+}
+
+// true — образ сошёлся по длине, CRC и маркеру платы и записан. Дальше зовущий перезагружает
+// узел; false — всё откатывается, раздел остаётся прежним.
+bool otaSlowStreamEnd(bool apply) {
+    bool ok = false;
+    if (apply) {
+        if (otaGot != otaTotal) {
+            Serial.printf("[SLOW] размер не сошёлся: %u из %u\n", (unsigned)otaGot, (unsigned)otaTotal);
+        } else if (~otaCrcAcc != otaCrcExp) {
+            Serial.printf("[SLOW] CRC не сошёлся\n");
+        } else if (fwScanVerdict(&otaImgScan) < 0) {
+            Serial.printf("[SLOW] образ платы %s, а это " BOARD_CODE "\n", otaImgScan.other);
+        } else if (!Update.end(true)) {
+            Update.printError(Serial);
+        } else {
+            ok = true;
+        }
+    }
+    if (!ok && Update.isRunning()) Update.abort();
+    otaZFree();
+    return ok;
+}
+
+#endif // FEATURE_MESH_OTA_RECEIVER
+
 #endif // FEATURE_MESH_OTA_RECEIVER

@@ -73,6 +73,17 @@ int supportSeen(const String& name, const String& ip) {
 }
 String coordIp = "";            // «вторые уши»: адрес координатора, принимающего /ears
 unsigned long coordSeenMs = 0;
+bool otaSlowOn = false;         // медленный режим: прошивка обычными сообщениями канала
+String otaSlowTarget = "";
+uint32_t otaSlowSeq = 0;
+uint32_t otaSlowChunks = 0;
+uint32_t otaSlowTotal = 0;
+uint32_t otaSlowCrc = 0;
+unsigned long otaSlowNextMs = 0;
+unsigned long otaSlowAckMs = 0;
+uint8_t otaSlowRetries = 0;
+uint32_t otaSlowAcked = 0;
+
 String otaDelegate = "";        // кому передана сессия; пусто — ведём сами
 unsigned long otaDelegateMs = 0;
 char otaNote[64] = "";          // «что произошло»: не ошибка, а сообщение

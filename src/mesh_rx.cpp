@@ -315,6 +315,38 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     // === СЕНСОРНЫЙ КАНАЛ: сообщение уходит в MQTT как отдельное устройство ===
     if (sensorChannelIdx >= 0 && chIdx == sensorChannelIdx) {
         // === MESH OTA: бот принимает ack, сенсор — чанки/управление ===
+        // ===== МЕДЛЕННЫЙ РЕЖИМ =====
+        // Разбираем ДО общей ветки "ota:", потому что часть его сообщений начинается так же.
+        // Чанки данных идут с отдельным префиксом: их много, и лишнее сравнение на каждом —
+        // это работа на каждый принятый кадр всей сети.
+        #if FEATURE_MESH_OTA_RECEIVER
+        if (lastMessage.startsWith(OTA_SLOW_MSG_DATA)) {
+            otaSlowRxData(lastMessage.substring(strlen(OTA_SLOW_MSG_DATA)));
+            return true;
+        }
+        if (lastMessage.startsWith(OTA_SLOW_MSG_START)) {
+            otaSlowRxStart(lastMessage.substring(strlen(OTA_SLOW_MSG_START)));
+            return true;
+        }
+        #endif
+        #if FEATURE_MESH_OTA_SENDER
+        // Подтверждение слышат оба — и отправитель, и координатор. Отправитель двигает по
+        // нему окно; у координатора, который сессию не ведёт, otaSlowOn ложно, и вызов
+        // ничего не делает, кроме обновления того, что видно на странице.
+        if (lastMessage.startsWith(OTA_SLOW_MSG_ACK)) {
+            otaSlowOnAck((uint32_t)strtoul(lastMessage.c_str() + strlen(OTA_SLOW_MSG_ACK), NULL, 10));
+            return true;
+        }
+        if (lastMessage.startsWith(OTA_SLOW_MSG_DONE)) {
+            otaSlowDone(true, nullptr);
+            return true;
+        }
+        if (lastMessage.startsWith(OTA_SLOW_MSG_FAIL)) {
+            otaSlowDone(false, lastMessage.c_str() + strlen(OTA_SLOW_MSG_FAIL));
+            return true;
+        }
+        #endif
+
         if (lastMessage.startsWith("ota:")) {
             // Ведущий сессии разбирает подтверждения, принимающий — чанки и управление.
             // Порядок важен: у прошивальщика есть и то, и другое, и он ведущий.

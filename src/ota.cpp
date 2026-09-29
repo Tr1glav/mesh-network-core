@@ -510,6 +510,19 @@ static bool otaStartRadio(const String& target) {
                  target.c_str());
             return false;
         }
+        // Дальше порога быстрый режим бесполезен — но есть медленный: он едет обычными
+        // сообщениями канала и доходит туда же, куда любое сообщение сети. Отказ остаётся
+        // только если и медленный не завести.
+        if (!otaHopsReachable(hops)) {
+            if (otaSlowStart(target)) {
+                snprintf(otaNote, sizeof(otaNote),
+                         "%s за %u ретранслятором(ами) — медленный режим", target.c_str(),
+                         (unsigned)hops);
+                slog("[OTA] '%s': %u хоп(ов) — идём медленным режимом по каналу\n",
+                     target.c_str(), (unsigned)hops);
+                return true;
+            }
+        }
         if (!otaHopsReachable(hops)) {
             snprintf(otaLastErr, sizeof(otaLastErr), "узел за %u ретранслятором(ами)",
                      (unsigned)hops);
@@ -539,6 +552,27 @@ static bool otaStartRadio(const String& target) {
 }
 
 // Общий запуск сессии: используется и веб-обработчиком, и автообновлением
+// Принудительно медленным режимом: узел может быть слышен напрямую, а проверить дальний
+// путь надо — иначе режим, которым шьют самые труднодоступные узлы, испытывается только
+// тогда, когда что-то сломалось.
+bool otaStartSessionSlow(const String& target) {
+    if (otaPhase != OTA_PHASE_IDLE && otaPhase != OTA_PHASE_DONE) return false;
+    if (supportBusy()) {
+        strlcpy(otaLastErr, "идёт передача прошивальщику", sizeof(otaLastErr));
+        return false;
+    }
+    if (channelKeyIsOpen(sensorChannelIdx)) {
+        strlcpy(otaLastErr, "канал сенсоров без своего ключа", sizeof(otaLastErr));
+        return false;
+    }
+    if (!otaFwReady || target.length() == 0 || target.length() > CFG_NAME_MAX) return false;
+    otaNote[0] = 0;
+    otaDelegate = "";
+    if (!otaSlowStart(target)) return false;
+    snprintf(otaNote, sizeof(otaNote), "%s: медленный режим принудительно", target.c_str());
+    return true;
+}
+
 bool otaStartSession(const String& target) {
     if (otaPhase != OTA_PHASE_IDLE && otaPhase != OTA_PHASE_DONE) return false;
     // Передача прошивальщику ещё идёт: она читает /ota.bin, и вторая сессия по тому же

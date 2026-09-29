@@ -77,6 +77,21 @@ bool supportLive(int idx);
 // Пусто — отметка ещё не дошла, и слать кадры некуда.
 extern String coordIp;
 extern unsigned long coordSeenMs;
+// ===== МЕДЛЕННЫЙ РЕЖИМ ПРОШИВКИ =====
+// Отдельное состояние, не пересекающееся с быстрым: у них разная механика (там окно кадров
+// и маска, здесь кумулятивное подтверждение), и смешивать их в одних переменных значило бы
+// чинить один режим и ломать другой.
+extern bool otaSlowOn;              // идёт медленная сессия (у отправителя или у приёмника)
+extern String otaSlowTarget;        // кого шьём
+extern uint32_t otaSlowSeq;         // первый неподтверждённый чанк
+extern uint32_t otaSlowChunks;      // всего чанков в образе
+extern uint32_t otaSlowTotal;       // байт в распакованном образе
+extern uint32_t otaSlowCrc;         // CRC32 распакованного образа
+extern unsigned long otaSlowNextMs; // когда уйдёт следующий чанк или повтор окна
+extern unsigned long otaSlowAckMs;  // когда ждём подтверждения
+extern uint8_t otaSlowRetries;      // повторов окна подряд без подтверждения
+extern uint32_t otaSlowAcked;       // сколько чанков подтверждено (для прогресса)
+
 // Кому передана текущая сессия; пусто — ведём сами. Пока не пусто, страница координатора
 // показывает ход сессии, спрашивая его у прошивальщика.
 extern String otaDelegate;

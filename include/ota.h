@@ -50,6 +50,35 @@ void setupOtaServer();
 // а в эфир они уходят по одному отсюда, из главного цикла.
 void webTick();
 #endif
+// Причина последнего отказа — её показывает страница. Определена в ota.cpp ядра, но до сих
+// пор объявлялась только в заголовке ПРОШИВКИ: внутри ota.cpp она видна как своё определение,
+// а другим файлам ядра — нет.
+extern char otaLastErr[48];
+
+// ===== МЕДЛЕННЫЙ РЕЖИМ (ota_slow.cpp) =====
+#if FEATURE_MESH_OTA_SENDER
+// Начать медленную сессию: образ едет обычными сообщениями канала и доходит туда же, куда
+// доходит любое сообщение сети, — в отличие от быстрого режима, ограниченного прямой
+// слышимостью. Платой становится время.
+bool otaSlowStart(const String& target);
+// Запустить медленный режим независимо от хопов — для проверки самого режима.
+bool otaStartSessionSlow(const String& target);
+void otaSlowTick();                       // шаг отправителя, из главного цикла
+void otaSlowOnAck(uint32_t next);         // подтверждение узла: «жду чанк N»
+void otaSlowDone(bool ok, const char* why);
+void otaSlowAbort(const char* why);
+#endif
+#if FEATURE_MESH_OTA_RECEIVER
+void otaSlowRxStart(const String& args);  // "ota:slow:<цель>:<байт>:<crc>:<чанков>"
+void otaSlowRxData(const String& args);   // "osd:<seq>:<base64>"
+void otaSlowRxTick();                     // сторож тишины в канале
+void otaSlowRxAbort(const char* why);
+// Обёртки над потоком быстрого режима: распаковка, запись и проверка у них общие.
+bool otaSlowStreamBegin(uint32_t total, uint32_t crc);
+bool otaSlowStreamFeed(const uint8_t* data, size_t n, bool last);
+bool otaSlowStreamEnd(bool apply);
+#endif
+
 #if FEATURE_MESH_OTA_RECEIVER
 void otaSensorDraw();
 void otaSensorAbort(const char* why);
