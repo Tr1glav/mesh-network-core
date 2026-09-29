@@ -25,6 +25,7 @@ float sensorRssi[SENSOR_DEV_CACHE_MAX];         // RSSI последнего п�
 uint8_t sensorHops[SENSOR_DEV_CACHE_MAX];       // хопов до узла ИЗ ЭФИРА; 0xFF — не слышали
 uint8_t sensorViaSup[SENSOR_DEV_CACHE_MAX];     // кто из прошивальщиков слышит узел (индекс+1)
 float sensorViaRssi[SENSOR_DEV_CACHE_MAX];      // ...и с каким качеством ОН его слышит
+unsigned long sensorHopsMs[SENSOR_DEV_CACHE_MAX];  // когда слышали узел из эфира
 SupportNode supports[SUPPORT_MAX];   // реестр прошивальщиков: имя, адрес, когда объявлялся
 int supportCount = 0;
 

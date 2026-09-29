@@ -16,6 +16,15 @@
 // публикует состояние узлов наружу. Узлу, который только принимает прошивку, он не нужен.
 #if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
 
+// Срок годности оценки — тот же, по которому узел считается ушедшим: если он уже офлайн, то
+// и «сколько до него хопов» — сведения о прошлом, а не о сети.
+uint8_t sensorHopsFresh(int idx) {
+    if (idx < 0 || idx >= sensorDeviceDiscCount) return 0xFF;
+    if (sensorHops[idx] == 0xFF || sensorHopsMs[idx] == 0) return 0xFF;
+    if (millis() - sensorHopsMs[idx] > SENSOR_OFFLINE_MS) return 0xFF;
+    return sensorHops[idx];
+}
+
 SensorHello lastHello;
 int lastSensorIdx = -1;
 bool lastSensorCameOnline = false;
@@ -48,6 +57,7 @@ static int sensorSlot(const String& name) {
     sensorHops[idx] = 0xFF;      // пока не услышали — не «напрямую», а «неизвестно»
     sensorViaSup[idx] = 0;
     sensorViaRssi[idx] = 0;
+    sensorHopsMs[idx] = 0;
     sensorOnlineNow[idx] = false;
     sensorLastActive[idx] = millis();
     sensorFwVersion[idx] = "";
@@ -71,6 +81,7 @@ void sensorRegistryNote() {
     } else {
         sensorRssi[idx] = lastRSSI;
         sensorHops[idx] = lastHopCount;
+        sensorHopsMs[idx] = millis();
     }
     lastSensorCameOnline = !sensorOnlineNow[idx];
     sensorOnlineNow[idx] = true;

@@ -501,10 +501,12 @@ static bool otaStartRadio(const String& target) {
         int hi = -1;
         for (int i = 0; i < sensorDeviceDiscCount; i++)
             if (sensorDeviceDisc[i] == target) { hi = i; break; }
-        const uint8_t hops = (hi >= 0) ? sensorHops[hi] : 0xFF;
+        // Свежая оценка, а не «когда-то слышали»: узел мог уехать из зоны слышимости, и
+        // сессия к нему заняла бы эфир на сорок секунд ради таймаута.
+        const uint8_t hops = sensorHopsFresh(hi);
         if (hops == 0xFF) {
-            snprintf(otaLastErr, sizeof(otaLastErr), "узел ещё не выходил в эфир");
-            slog("[OTA] отказ '%s': узел не слышали ни разу, путь до него неизвестен\n",
+            snprintf(otaLastErr, sizeof(otaLastErr), "узел не слышно из эфира");
+            slog("[OTA] отказ '%s': из эфира его сейчас не слышно, путь неизвестен\n",
                  target.c_str());
             return false;
         }
