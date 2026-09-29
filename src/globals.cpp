@@ -73,6 +73,7 @@ int supportSeen(const String& name, const String& ip) {
 }
 String coordIp = "";            // «вторые уши»: адрес координатора, принимающего /ears
 unsigned long coordSeenMs = 0;
+unsigned long otaSlowAirMs = 0;   // когда слышали чанк медленной прошивки
 bool otaSlowOn = false;         // медленный режим: прошивка обычными сообщениями канала
 String otaSlowTarget = "";
 uint32_t otaSlowSeq = 0;

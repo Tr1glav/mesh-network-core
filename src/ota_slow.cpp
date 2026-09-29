@@ -151,10 +151,16 @@ void otaSlowTick() {
             otaSlowAbort("узел не подтверждает");
             return;
         }
-        slog("[SLOW] нет подтверждения, повтор окна с %u (попытка %u)\n",
-             (unsigned)otaSlowSeq, (unsigned)otaSlowRetries);
+        // Пауза перед повтором растёт с числом неудач: сеть могла замолчать надолго, и
+        // долбить прежним темпом — мешать и себе, и остальным. Потолок не даёт паузе уйти
+        // в бесконечность: связь возвращается, и мы должны это заметить.
+        unsigned long wait = (unsigned long)otaSlowRetries * OTA_SLOW_RETRY_STEP_MS;
+        if (wait > OTA_SLOW_RETRY_MAX_MS) wait = OTA_SLOW_RETRY_MAX_MS;
+        slog("[SLOW] нет подтверждения, повтор окна с %u через %lu с (попытка %u из %d)\n",
+             (unsigned)otaSlowSeq, wait / 1000, (unsigned)otaSlowRetries,
+             (int)OTA_SLOW_MAX_RETRIES);
         otaSlowAckMs = 0;
-        otaSlowNextMs = millis();
+        otaSlowNextMs = millis() + wait;
         return;
     }
 

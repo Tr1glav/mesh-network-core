@@ -66,6 +66,14 @@ static void scheduleReply(bool dm, uint8_t dmSrc, int chIdx, const char* text) {
 void meshReplyTick() {
     if (pendingReply.dueMs == 0) return;
     if ((long)(millis() - pendingReply.dueMs) < 0) return;
+    // Идёт медленная прошивка — ждём тишины. Наш ответ поверх чанка потерял бы и себя, и
+    // чанк: эфир общий и полудуплексный. Заявку не отменяем, а сдвигаем — проверка связи
+    // ответит позже, зато ответит, а прошивка не начнёт заново из-за нас.
+    if (otaSlowAirMs != 0 && millis() - otaSlowAirMs < OTA_SLOW_AIR_BUSY_MS) {
+        pendingReply.dueMs = millis() + OTA_SLOW_AIR_BUSY_MS;
+        if (pendingReply.dueMs == 0) pendingReply.dueMs = 1;
+        return;
+    }
     pendingReply.dueMs = 0;
     uint8_t frame[256];
 
@@ -315,6 +323,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     // === СЕНСОРНЫЙ КАНАЛ: сообщение уходит в MQTT как отдельное устройство ===
     if (sensorChannelIdx >= 0 && chIdx == sensorChannelIdx) {
         // === MESH OTA: бот принимает ack, сенсор — чанки/управление ===
+        // Чанк медленной прошивки слышен всем в канале, а не только его участникам. Отмечаем
+        // это до разбора и независимо от признаков: по отметке любой узел понимает, что эфир
+        // сейчас чужой, и не лезет со своим ответом.
+        if (lastMessage.startsWith(OTA_SLOW_MSG_DATA)) otaSlowAirMs = millis();
+
         // ===== МЕДЛЕННЫЙ РЕЖИМ =====
         // Разбираем ДО общей ветки "ota:", потому что часть его сообщений начинается так же.
         // Чанки данных идут с отдельным префиксом: их много, и лишнее сравнение на каждом —

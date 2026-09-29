@@ -9,7 +9,27 @@ void rearmRadioAGC() {
     lastReArmMs = millis();
 }
 
+// Дождаться тишины в канале. Возвращает true, если канал освободился, false — если предел
+// попыток исчерпан и передавать придётся поверх (см. CAD_MAX_TRIES).
+//
+// В быстром режиме OTA проверка пропускается: там FSK, а CAD — это про LoRa; к тому же
+// быстрый канал отдельный, и на нём кроме нас никого нет.
+static bool waitChannelFree() {
+    if (otaFastMode) return true;
+    for (int i = 0; i < CAD_MAX_TRIES; i++) {
+        const int16_t st = radio.scanChannel();
+        if (st == RADIOLIB_CHANNEL_FREE) return true;
+        // Занято (LORA_DETECTED / PREAMBLE_DETECTED) либо ошибка сканирования — ждём и
+        // пробуем снова. Пауза случайная: иначе два узла, дождавшиеся конца чужой передачи,
+        // столкнутся уже друг с другом.
+        delay(random(CAD_RETRY_MIN_MS, CAD_RETRY_MAX_MS));
+    }
+    Serial.println("[TX] канал занят слишком долго — передаю поверх");
+    return false;
+}
+
 int txFrame(uint8_t* frame, int f) {
+    waitChannelFree();
     #if HAS_FEM
     digitalWrite(FEM_TX_PIN, HIGH);
     #endif
