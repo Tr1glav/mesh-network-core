@@ -510,21 +510,14 @@ static bool otaStartRadio(const String& target) {
                  target.c_str());
             return false;
         }
-        // Дальше порога быстрый режим бесполезен — но есть медленный: он едет обычными
-        // сообщениями канала и доходит туда же, куда любое сообщение сети. Отказ остаётся
-        // только если и медленный не завести.
+        // Дальше порога быстрый режим бесполезен. Медленный сюда НЕ подставляется сам:
+        // он занимает общий канал на часы, и такое решение принимает человек, а не
+        // автоматика — тем более что автообновление ходит этим же путём и тихо заняло бы
+        // эфир на весь день. Он запускается только явно (otaStartSessionSlow, кнопка на
+        // странице), а здесь остаётся честный отказ с названной причиной.
         if (!otaHopsReachable(hops)) {
-            if (otaSlowStart(target)) {
-                snprintf(otaNote, sizeof(otaNote),
-                         "%s за %u ретранслятором(ами) — медленный режим", target.c_str(),
-                         (unsigned)hops);
-                slog("[OTA] '%s': %u хоп(ов) — идём медленным режимом по каналу\n",
-                     target.c_str(), (unsigned)hops);
-                return true;
-            }
-        }
-        if (!otaHopsReachable(hops)) {
-            snprintf(otaLastErr, sizeof(otaLastErr), "узел за %u ретранслятором(ами)",
+            snprintf(otaLastErr, sizeof(otaLastErr),
+                     "узел за %u ретранслятором(ами) — только медленным режимом",
                      (unsigned)hops);
             slog("[OTA] отказ '%s': %u хоп(ов) до узла (предел %d), и прошивальщик его не "
                  "слышит\n", target.c_str(), (unsigned)hops, (int)OTA_RADIO_MAX_HOPS);
