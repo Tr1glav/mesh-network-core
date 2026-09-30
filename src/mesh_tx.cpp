@@ -9,6 +9,22 @@
 // Выделено из mesh.cpp: объявление себя в сети, сборка группового и личного кадра,
 // повторы флуда и сообщения узла (heartbeat, проверка связи, синхронизация времени).
 
+// Пауза перед следующей копией. Свою базу вызывающий код может задать (gapMs),
+// а может не задавать — тогда пауза берётся из всего заявленного диапазона
+// FLOOD_RETRY_MIN_MS…MAX_MS плюс FLOOD_JITTER_MS разброса сверху, чтобы соседи не
+// повторяли копии синхронно.
+//
+// Раньше FLOOD_RETRY_MAX_MS был объявлен, но не использовался: пауза всегда бралась из
+// FLOOD_RETRY_MIN_MS, то есть 1000…1500 мс вместо задуманных 1000…1800, и разброс между
+// соседями был вдвое уже, чем считалось. Ноль означает «не задано»: иначе база по
+// умолчанию, равная FLOOD_RETRY_MIN_MS, снова прижимала бы диапазон к нижней границе.
+unsigned int floodGapMs(unsigned int baseMs) {
+    if (baseMs == 0) return random(FLOOD_RETRY_MIN_MS, FLOOD_RETRY_MAX_MS + FLOOD_JITTER_MS);
+    if (baseMs < FLOOD_RETRY_MIN_MS) baseMs = FLOOD_RETRY_MIN_MS;
+    if (baseMs > FLOOD_RETRY_MAX_MS) baseMs = FLOOD_RETRY_MAX_MS;
+    return random(baseMs, baseMs + FLOOD_JITTER_MS);
+}
+
 void sendAdvert(uint8_t route_type) {
     uint8_t app[32];
     int applen = 0;
@@ -43,7 +59,16 @@ void sendAdvert(uint8_t route_type) {
     for (int i = 0; i < f; i++) Serial.printf("%02X", frame[i]);
     Serial.println();
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
-    txFrame(frame, f);
+
+    // Объявление уходит FLOOD_REPEATS копиями, как и всякое сообщение. Раньше оно уходило
+    // ровно один раз, и это была отдельная беда: адверт несёт публичный ключ, и потерянный
+    // адверт — это узел, которому нельзя ответить в личку (findPeerPub вернёт NULL), плюс
+    // пропавший из реестра сосед. Узлы объявляются раз в пять минут, так что одна неудачная
+    // передача означала минуты недоступности, а не секунды.
+    for (int i = 0; i < FLOOD_REPEATS; i++) {
+        txFrame(frame, f);
+        if (i < FLOOD_REPEATS - 1) delay(floodGapMs(0));
+    }
 }
 
 int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc) {
@@ -107,10 +132,13 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     return f;
 }
 
-int sendFrame(int chIdx, const uint8_t* frame, int f) {
+int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
     if (chIdx < 0 || chIdx >= numChannels) return RADIOLIB_ERR_UNKNOWN;
-    // hex-лог кадра стоит ~40 мс на UART для 245-байтного кадра — в fast-режиме молчим
-    if (!otaFastMode) {
+    // hex-лог кадра стоит ~40 мс на UART для 245-байтного кадра — в fast-режиме молчим.
+    // Копии флуда побайтово одинаковы, поэтому кадр печатается один раз на сообщение
+    // (floodSend вызывает это с logHex только для первой копии): три копии давали три
+    // одинаковых дампа, а UART на 115200 не успевает и это само по себе тормозит отправку.
+    if (logHex && !otaFastMode) {
         for (int i = 0; i < f; i++) Serial.printf("%02X", frame[i]);
         Serial.println();
     }
@@ -120,9 +148,13 @@ int sendFrame(int chIdx, const uint8_t* frame, int f) {
 void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs, int repeats) {
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
     for (int i = 0; i < repeats; i++) {
-        if (chIdx >= 0) sendFrame(chIdx, frame, f);
+        if (chIdx >= 0) sendFrame(chIdx, frame, f, i == 0);
         else            txFrame((uint8_t*)frame, f);
-        if (i < repeats - 1) delay(gapMs);
+        // Пауза перед следующей копией набирается заново для каждой: одинаковые паузы снова
+        // собрали бы копии в один залп, и одна помеха убила бы их все. Разброс поверх
+        // gapMs нужен ещё и для того, чтобы два узла, начавшие передачу вместе, не повторяли
+        // копии синхронно.
+        if (i < repeats - 1) delay(floodGapMs(gapMs));
     }
 }
 
@@ -187,6 +219,24 @@ void sensorSendHello() {
 
 #ifdef SENSOR_NODE
 // Эхо-запрос: одиночная посылка, чтобы измерять время одного обмена, а не повторов
+void sensorSendMsgUnique(const char* prefix) {
+    // Сообщение, которое может дословно повториться (нажатие кнопки), уходит с номером
+    // отправки. Без номера два одинаковых нажатия в одну секунду дают ПОБАЙТОВО одинаковый
+    // кадр: время в кадре хранится с точностью до секунды, а шифрование — ECB без nonce,
+    // поэтому совпадает и шифротекст, а с ним и хэш дедупликации. Второе нажатие
+    // отбрасывалось всей сетью как дубликат, и до Home Assistant доходило одно.
+    //
+    // Номер существует только в эфире: получатель убирает его по тому же правилу, что и
+    // префикс имени, и в MQTT отдаётся прежнее «button» — иначе сломались бы все
+    // автоматизации, подписанные на это значение.
+    static uint16_t seq = 0;
+    seq++;
+    if (seq == 0) seq = 1;   // 0 — «номера нет»
+    char msg[64];
+    snprintf(msg, sizeof(msg), "%s:%u", prefix, (unsigned)seq);
+    sensorSendMsg(msg);
+}
+
 void sensorPingSend() {
     if (sensorChannelIdx < 0) return;
     // Номер запроса — счётчик, а не младшие байты millis(): те заворачиваются каждые ~65 с,
@@ -200,7 +250,7 @@ void sensorPingSend() {
     snprintf(msg, sizeof(msg), "%s%u", SENSOR_MSG_PING, (unsigned)pingId);
     pingSentMs = millis();
     if (pingStatSent < 0xFFFF) pingStatSent++;
-    sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
+    sensorSendMsg(msg, 0, 1);
 }
 
 void pingModeToggle() {

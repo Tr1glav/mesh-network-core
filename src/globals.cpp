@@ -121,6 +121,12 @@ uint8_t seen_advert_hashes[SEEN_ADVERT_HASH_COUNT * SEEN_HASH_SIZE];
 int seen_advert_next_idx = 0;
 uint32_t duplicateCount = 0;
 uint32_t relayForwardedCount = 0;   // чужих флуд-кадров, переизданных этим узлом
+uint32_t cadGiveUps = 0;        // передали, не дождавшись тишины в канале
+uint32_t relayQueueDrops = 0;   // очередь переизданий была полна, кадр не переиздан
+uint32_t replyDropped = 0;      // запрос требовал ответа, а предыдущий ещё не ушёл
+uint32_t replyDeferred = 0;     // ответ сдвинут из-за идущей медленной прошивки
+uint32_t dmNoPubkey = 0;        // не нашли публичный ключ: advert узла до нас не дошёл
+uint32_t framesSentCount = 0;   // всего копий ушло в эфир
 String logTail;
 // used + печать в setup(): иначе линковщик с --gc-sections выбросит строку из образа
 const char fwMarker[] __attribute__((used)) = FW_MARKER;

@@ -316,11 +316,11 @@ void cfgHandleMeshCfg(const String& rest) {
     if (rest == "save") {
         cfgSave();
         cfgPendingSince = 0;   // подтверждено, сторож больше не нужен
-        sensorSendMsg("cfg:ok:save", FLOOD_RETRY_MS, 1);
+        sensorSendMsg("cfg:ok:save", 0, 1);
         return;
     }
     if (rest == "reboot") {
-        sensorSendMsg("cfg:ok:reboot", FLOOD_RETRY_MS, 1);
+        sensorSendMsg("cfg:ok:reboot", 0, 1);
         delay(500);
         ESP.restart();
         return;
@@ -339,34 +339,34 @@ void cfgHandleMeshCfg(const String& rest) {
             if (v.length() == 0 || v == "(пусто)") continue;
             String piece = String(FIELDS[i].cmd) + "=" + v + ";";
             if (out.length() + piece.length() > 180) {
-                sensorSendMsg(out.c_str(), FLOOD_RETRY_MS, 1);
+                sensorSendMsg(out.c_str(), 0, 1);
                 delay(1500);
                 out = "cfg:val:";
             }
             out += piece;
         }
-        if (out.length() > 8) sensorSendMsg(out.c_str(), FLOOD_RETRY_MS, 1);
+        if (out.length() > 8) sensorSendMsg(out.c_str(), 0, 1);
         return;
     }
     int eq = rest.indexOf('=');
     if (eq <= 0) {
-        sensorSendMsg("cfg:err:format", FLOOD_RETRY_MS, 1);
+        sensorSendMsg("cfg:err:format", 0, 1);
         return;
     }
     String field = rest.substring(0, eq);
     String value = rest.substring(eq + 1);
     const CfgField* fl = cfgFind(field);
     if (!fl) {
-        sensorSendMsg(("cfg:err:" + field).c_str(), FLOOD_RETRY_MS, 1);
+        sensorSendMsg(("cfg:err:" + field).c_str(), 0, 1);
         return;
     }
     if (!cfgSetField(*fl, value)) {
-        sensorSendMsg(("cfg:err:" + field).c_str(), FLOOD_RETRY_MS, 1);
+        sensorSendMsg(("cfg:err:" + field).c_str(), 0, 1);
         return;
     }
     cfgPendingSince = millis();
     Serial.printf("[CFG] по радио: %s задано (жду save)\n", field.c_str());
-    sensorSendMsg(("cfg:ok:" + field).c_str(), FLOOD_RETRY_MS, 1);
+    sensorSendMsg(("cfg:ok:" + field).c_str(), 0, 1);
 }
 
 void cfgPendingTick() {

@@ -83,6 +83,10 @@ static bool meshFrameHash(const uint8_t* data, int len, uint8_t* payload_type, u
     return true;
 }
 
+bool meshFrameHashOf(const uint8_t* data, int len, uint8_t out[32]) {
+    return meshFrameHash(data, len, NULL, out);
+}
+
 bool checkAndMarkSeen(uint8_t* data, int len) {
     uint8_t payload_type;
     uint8_t hash_ctx[32];

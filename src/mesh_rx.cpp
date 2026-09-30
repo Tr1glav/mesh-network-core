@@ -48,7 +48,9 @@ static void scheduleReply(bool dm, uint8_t dmSrc, int chIdx, const char* text) {
     // Заявка ровно одна. Ответить на лавину пакетов мы всё равно не сможем — эфир один, —
     // а очередь ответов заняла бы его надолго и превратилась бы в ту же остановку цикла.
     if (pendingReply.dueMs != 0) {
-        Serial.println("[PING] предыдущий ответ ещё не ушёл — этот пропускаем");
+        replyDropped++;
+        Serial.printf("[PING] предыдущий ответ ещё не ушёл — этот пропускаем (всего %lu)\n",
+                      (unsigned long)replyDropped);
         return;
     }
     pendingReply.dm = dm;
@@ -72,6 +74,7 @@ void meshReplyTick() {
     if (otaSlowAirMs != 0 && millis() - otaSlowAirMs < OTA_SLOW_AIR_BUSY_MS) {
         pendingReply.dueMs = millis() + OTA_SLOW_AIR_BUSY_MS;
         if (pendingReply.dueMs == 0) pendingReply.dueMs = 1;
+        replyDeferred++;
         return;
     }
     pendingReply.dueMs = 0;
@@ -83,8 +86,10 @@ void meshReplyTick() {
         // как раз прийти.
         uint8_t* peerPub = findPeerPub(pendingReply.dmSrc);
         if (peerPub == NULL) {
-            Serial.printf("[DM] pubkey <%02X> неизвестен (нет advert) — ответ не отправлен\n",
-                          pendingReply.dmSrc);
+            dmNoPubkey++;
+            Serial.printf("[DM] pubkey <%02X> неизвестен (нет advert) — ответ не отправлен "
+                          "(всего %lu: advert узла до нас не дошёл)\n",
+                          pendingReply.dmSrc, (unsigned long)dmNoPubkey);
             return;
         }
         int dl = buildPrivateTextFrame(pendingReply.dmSrc, peerPub, pendingReply.text,
@@ -403,7 +408,7 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                      lastMessage.c_str() + strlen(SENSOR_MSG_PING),
                      (int)lround(lastRSSI), (int)lround(lastSNR));
             slog("[PING] %s -> %s\n", lastSender.c_str(), reply);
-            sensorSendMsg(reply, FLOOD_RETRY_MS, 1);
+            sensorSendMsg(reply, 0, 1);
             #endif
             return true;
         }

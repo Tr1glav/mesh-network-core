@@ -157,6 +157,17 @@ extern uint8_t seen_advert_hashes[SEEN_ADVERT_HASH_COUNT * SEEN_HASH_SIZE];
 extern int seen_advert_next_idx;
 extern uint32_t duplicateCount;
 extern uint32_t relayForwardedCount;   // чужих флуд-кадров, переизданных этим узлом
+
+// Счётчики потерь. «Ненадёжно ходят» — это шесть разных причин с разными лекарствами, и
+// по одному «не дошло» непонятно, какая из них. Эти счётчики показывают, где именно:
+// нули везде — дело в приёме у адресата, ненулевой cadGiveUps — канал был занят так, что
+// мы передали поверх, и так далее.
+extern uint32_t cadGiveUps;        // передали, не дождавшись тишины в канале
+extern uint32_t relayQueueDrops;   // очередь переизданий была полна, кадр не переиздан
+extern uint32_t replyDropped;      // запрос требовал ответа, а предыдущий ещё не ушёл
+extern uint32_t replyDeferred;     // ответ сдвинут из-за идущей медленной прошивки
+extern uint32_t dmNoPubkey;        // не нашли публичный ключ: advert узла до нас не дошёл
+extern uint32_t framesSentCount;   // всего копий ушло в эфир
 extern String logTail;
 extern const char fwMarker[];   // FW_MARKER, зашит в образ для проверки платы
 

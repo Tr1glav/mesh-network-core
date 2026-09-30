@@ -52,6 +52,17 @@ static bool otaWriteImage(const uint8_t* data, size_t n) {
 // с ним распаковщик не берётся за символы, которым не хватает бит в буфере, и
 // придерживает хвост образа до следующей порции — которой уже не будет. Так терялись
 // последние байты (на образе 1106000 доходило 1103279), и приём падал с «size mismatch».
+static void otaSensorAckstart() {
+    if (sensorChannelIdx < 0) return;
+    uint8_t frame[256];
+    int f = buildGroupFrameFlood(sensorChannelIdx, OTA_ACKSTART, frame, sizeof(frame));
+    if (f <= 0) return;
+    for (int i = 0; i < OTA_ACKSTART_COPIES; i++) {
+        if (i) delay(OTA_ACKSTART_GAP_MS);
+        sendFrame(sensorChannelIdx, frame, f, i == 0);
+    }
+}
+
 static bool otaFeed(const uint8_t* in, size_t n, bool last) {
     for (;;) {
         size_t inBytes = n;
@@ -298,7 +309,9 @@ void otaSensorHandle() {
         Serial.printf("[OTA] start %s: %u байт crc=%08X\n", cfg.name.c_str(), total, crc);
         otaSensorDraw();
         // ackstart уходит на штатном конфиге; бот после него ждёт OTA_FAST_SETTLE_MS.
-        sensorSendMsg(OTA_ACKSTART, 20);
+        // Своя отправка, а не sensorSendMsg: у того пауза флуда, а здесь бюджет жёсткий —
+        // сенсор ещё не на быстром канале и его сторож уже тикает (см. OTA_ACKSTART_GAP_MS).
+        otaSensorAckstart();
         radioSetFastConfig();
         if (!radioFastReadyNow()) {
             otaSensorAbort("радио не переключилось");

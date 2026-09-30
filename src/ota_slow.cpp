@@ -96,7 +96,12 @@ bool otaSlowStart(const String& target) {
     char msg[96];
     snprintf(msg, sizeof(msg), "%s%s:%u:%08X:%u", OTA_SLOW_MSG_START, target.c_str(),
              (unsigned)otaSlowTotal, (unsigned)otaSlowCrc, (unsigned)otaSlowChunks);
-    sensorSendMsg(msg);
+    // Одной посылкой, как чанки и подтверждения. Старт — тоже рукопожатие: узел отвечает
+    // через OTA_SLOW_ACK_DELAY_MS, то есть пока флуд шлёт вторую и третью копию (с паузой
+    // флуда это 1–2.3 с и до 4.6 с на весь флуд), его подтверждение падает в занятый эфир.
+    // Маятник «в канале говорит только один» для этого нарушался ровно на старте сессии.
+    // Потерянное подтверждение не страшно: окно повторяется целиком, попыток много.
+    sensorSendMsg(msg, 0, 1);
     slog("[SLOW] старт -> '%s': %u байт, %u чанков по %d\n", target.c_str(),
          (unsigned)otaSlowTotal, (unsigned)otaSlowChunks, (int)OTA_SLOW_CHUNK_BYTES);
     return true;
@@ -193,7 +198,7 @@ void otaSlowTick() {
              (int)b64len, (const char*)b64);
     // Одной посылкой, без повторов: окно и так повторяется целиком, а лишняя копия каждого
     // чанка удвоила бы и без того долгую сессию.
-    sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
+    sensorSendMsg(msg, 0, 1);
 
     sent++;
     otaSlowDraw();
@@ -241,7 +246,7 @@ static void slowRxAckNow() {
     slowRxAckDueMs = 0;
     char msg[32];
     snprintf(msg, sizeof(msg), "%s%u", OTA_SLOW_MSG_ACK, (unsigned)slowRxExpect);
-    sensorSendMsg(msg, FLOOD_RETRY_MS, 1);
+    sensorSendMsg(msg, 0, 1);
 }
 
 void otaSlowRxAbort(const char* why) {

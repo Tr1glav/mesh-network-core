@@ -10,26 +10,51 @@ void rearmRadioAGC() {
 }
 
 // Дождаться тишины в канале. Возвращает true, если канал освободился, false — если предел
-// попыток исчерпан и передавать придётся поверх (см. CAD_MAX_TRIES).
+// исчерпан и передавать придётся поверх (см. CAD_WAIT_BUDGET_MS).
+//
+// Предел общий по времени, а не только по числу попыток. Предел по попыткам давал хвост до
+// 8 * 480 = 3.8 с на КАЖДУЮ передачу, а floodSend отправляет копию за копией: сообщение
+// уходило в эфир через десяток секунд после нажатия, и ответ на него уже не догонял
+// отправителя. Теперь ждать дольше CAD_WAIT_BUDGET_MS бессмысленно — сообщение к этому
+// моменту уже никому не нужно.
 //
 // В быстром режиме OTA проверка пропускается: там FSK, а CAD — это про LoRa; к тому же
 // быстрый канал отдельный, и на нём кроме нас никого нет.
 static bool waitChannelFree() {
     if (otaFastMode) return true;
+    const unsigned long startedMs = millis();
     for (int i = 0; i < CAD_MAX_TRIES; i++) {
         const int16_t st = radio.scanChannel();
         if (st == RADIOLIB_CHANNEL_FREE) return true;
         // Занято (LORA_DETECTED / PREAMBLE_DETECTED) либо ошибка сканирования — ждём и
         // пробуем снова. Пауза случайная: иначе два узла, дождавшиеся конца чужой передачи,
         // столкнутся уже друг с другом.
-        delay(random(CAD_RETRY_MIN_MS, CAD_RETRY_MAX_MS));
+        const int pauseMs = random(CAD_RETRY_MIN_MS, CAD_RETRY_MAX_MS);
+        if ((unsigned long)(millis() - startedMs) + pauseMs >= CAD_WAIT_BUDGET_MS) break;
+        delay(pauseMs);
     }
-    Serial.println("[TX] канал занят слишком долго — передаю поверх");
+    cadGiveUps++;
+    Serial.printf("[TX] канал занят дольше %d мс — передаю поверх (всего %lu)\n",
+                  CAD_WAIT_BUDGET_MS, (unsigned long)cadGiveUps);
     return false;
 }
 
 int txFrame(uint8_t* frame, int f) {
+    // Проверка занятости канала уводит чип в standby и затирает ожидающий RX_DONE, а вместе
+    // с ним уже принятый пакет: он был получен, но не прочитан. Пока идёт передача, мы всё
+    // равно глухи, поэтому честнее сначала разобрать то, что пришло, — и не терять кадр
+    // только из-за того, что мы сами что-то собрались слать. В быстром режиме путь другой
+    // (там разбор сырых кадров может сам слать), поэтому пропускаем.
+    static bool draining = false;   // защита от повторного входа из разбора принятого
+    if (!otaFastMode && !draining && isListening &&
+        (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE)) {
+        draining = true;
+        radioRxTick();
+        draining = false;
+    }
+
     waitChannelFree();
+    framesSentCount++;
     #if HAS_FEM
     digitalWrite(FEM_TX_PIN, HIGH);
     #endif

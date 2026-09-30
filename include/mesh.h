@@ -5,6 +5,8 @@
 void initAdvertIdentity();
 uint8_t* findPeerPub(uint8_t hash);
 void rememberPeerPub(uint8_t hash, const uint8_t* pub);
+// Хэш кадра для дедупликации: [тип пакета 1B][тело после пути], путь в хэш не входит.
+bool meshFrameHashOf(const uint8_t* data, int len, uint8_t out[32]);
 bool checkAndMarkSeen(uint8_t* data, int len);
 // Пометить СВОЙ ушедший кадр как «уже виденный» — эхо, вернувшееся от ретранслятора,
 // не должно заново пройти dedup и быть переизданным (см. mesh.cpp).
@@ -30,13 +32,25 @@ int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc);
 int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen);
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           const String& msg, uint8_t* frame, int maxlen);
-int sendFrame(int chIdx, const uint8_t* frame, int f);
-// Одно и то же сообщение уходит в эфир несколько раз: приёмник отбрасывает дубликаты по
-// хэшу, а лишняя копия спасает от коллизии. Двух копий достаточно — третья только занимала
-// эфир и задерживала следующую передачу.
-void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs = FLOOD_RETRY_MS,
-               int repeats = 2);
-void sensorSendMsg(const char* msg, unsigned int gapMs = FLOOD_RETRY_MS, int repeats = 2);
+// logHex печатает кадр в журнал. Выключайте, когда кадр уже напечатан: копии флуда
+// побайтово равны, и дамп на каждую копию только тормозит UART, ничего не добавляя.
+int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex = true);
+// Пауза между копиями флуда: случайная величина из FLOOD_RETRY_MIN_MS…MAX_MS плюс
+// FLOOD_JITTER_MS разброса поверх, чтобы соседи не повторяли копии синхронно.
+// gapMs = 0 — «пауза по конфигурации»; своё значение вызывающий код задаёт только когда
+// ему нужна именно такая база. Объявлена здесь, потому что ею пользуются и sendAdvert,
+// и floodSend.
+unsigned int floodGapMs(unsigned int baseMs = 0);
+// Одно и то же сообщение уходит в эфир FLOOD_REPEATS раз, с паузой между копиями
+// разнесённой случайно. Пауза заведомо больше времени в эфире, поэтому чужая помеха
+// накрывает одну копию, а не все сразу; см. FLOOD_RETRY_* в config.h.
+void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs = 0,
+               int repeats = FLOOD_REPEATS);
+void sensorSendMsg(const char* msg, unsigned int gapMs = 0, int repeats = FLOOD_REPEATS);
+// Сообщение, которое может дословно повториться, — с номером отправки. Без него два
+// одинаковых повтора в одну секунду дают одинаковый шифротекст, а значит и одинаковый хэш:
+// сеть отбросила бы второй как дубликат. Номер читатель убирает (см. sensorSendMsgUnique).
+void sensorSendMsgUnique(const char* prefix);
 #ifdef SENSOR_NODE
 void sensorSendHello();
 void sensorPingSend();      // один эхо-запрос
@@ -81,9 +95,23 @@ bool meshRxFrame(uint8_t* data, int len, const MeshRxMeta& meta);
 // Парсинг с явной метой приёма (forwarded-кадры не читают radio.getRSSI()).
 bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta);
 
-// Ретрансляция чужих флуд-кадров: maybeQueueRelay решает по принятому кадру и ставит его
-// в очередь, meshRelayTick переиздаёт просроченные (зовётся из главного цикла).
-void maybeQueueRelay(const uint8_t* data, int len);
+// Ретрансляция чужих флуд-кадров. ВЫКЛЮЧЕНА по умолчанию: ретранслятором не должен быть
+// никто, FEATURE_RELAY = 0 (см. config.h). В обычной сборке обе функции ниже — пустышки, и
+// звать их можно без условия; включается ретрансляция сборкой с -DFEATURE_RELAY=1. Всё
+// описанное дальше относится к включённому признаку.
+//
+// maybeQueueRelay решает по принятому кадру и ставит его в очередь, meshRelayTick переиздаёт
+// просроченные (зовётся из главного цикла).
+//
+// maybeQueueRelay зовётся для КАЖДОГО принятого кадра, включая копии, — и держит собственный
+// кэш, чтобы не поставить один кадр в очередь дважды. Общий дедуп для этого не годится: он
+// помечает кадр «увиденным» навсегда, и если очередь в этот момент оказалась полна, кадр
+// терялся целиком — вторая копия отправителя приходила, признавалась дубликатом и больше не
+// переиздавалась. Ответ функции решает именно эту судьбу.
+#define RELAY_QUEUED  0   // кадр поставлен в очередь
+#define RELAY_SKIPPED 1   // не наш, петля, либо уже переиздавали
+#define RELAY_NOROOM  2   // очередь полна: хэш намеренно не запомнен, ждём следующую копию
+int maybeQueueRelay(const uint8_t* data, int len);
 void meshRelayTick();
 
 // Учесть сообщение из сенсорного канала в реестре узлов: обновляет запись отправителя и

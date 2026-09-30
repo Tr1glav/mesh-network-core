@@ -47,44 +47,66 @@ void radioRxTick() {
                     otaHandleRawFrame(buffer, pktLen);
                     lastReArmMs = millis();
                     if (!otaRawDidTx) radio.startReceive();
-                } else if (checkAndMarkSeen(buffer, pktLen)) {
-                    duplicateCount++;
-                    Serial.printf("[DUP] skipped (total dups=%lu)\n", duplicateCount);
                 } else {
-                    // Свежий чужий кадр: ретрансляция (переиздание флуд-кадров). Не блокирует
-                    // цикл — только ставит в очередь, передаст главный цикл (meshRelayTick).
+                    // Вызов остаётся без #if: при выключенном FEATURE_RELAY (это значение по
+                    // умолчанию — ретранслятором не должен быть никто) maybeQueueRelay
+                    // пустышка, и условие живёт в одном месте, в mesh_relay.cpp. Всё
+                    // объяснение ниже относится к сборке, где признак включён.
+                    //
+                    // Ретрансляция — ДО дедупа, и это не перестановка для красоты. maybeQueueRelay
+                    // держит собственный кэш и сам разбирается, переиздавался ли кадр; общий
+                    // дедуп для этой роли не годился. Он помечает кадр навсегда, и если очередь
+                    // переизданий в этот момент была полна, кадр выпадал из неё вместе со
+                    // всеми копиями: вторая копия отправителя приходила, узнавалась как
+                    // дубликат и больше никуда не переиздавалась. Теперь зовём ретрансляцию
+                    // для каждой принятой копии — если очередь уже разгрузилась, кадр в неё
+                    // попадёт.
                     maybeQueueRelay(buffer, pktLen);
+                    // Дедуп и разбор — ВНУТРИ этой же ветки, и это не вопрос вкуса. Сырой
+                    // кадр быстрого OTA не должен попадать сюда: checkAndMarkSeen пометил бы
+                    // его в общем кольцевом буфере (он не meshcore-кадр, и следующий
+                    // настоящий кадр с тем же хэшем счёлся бы дубликатом), а разбор ниже
+                    // вызвал бы radio.startReceive() поверх ещё не ушедшего в эфир WACK —
+                    // приёмник переподписался бы, не дождавшись конца собственной передачи.
+                    // Раньше это было завязано как `else if`, то есть обе ветви были
+                    // взаимоисключающими; при переносе ретрансляции выше дедупа цепочка
+                    // осталась снаружи else и стала общей для обоих режимов.
+                    if (checkAndMarkSeen(buffer, pktLen)) {
+                        duplicateCount++;
+                        Serial.printf("[DUP] skipped (total dups=%lu)\n", duplicateCount);
+                    } else {
+                        // Свежий чужой кадр.
+                        // «Вторые уши»: свежий кадр можно переслать координатору по сети.
+                        // Хук срабатывает только для радио (forwarded-кадры уже прошли через
+                        // него на другом конце): повторять по WiFi то, что и так пришло по WiFi,
+                        // — замкнутый круг. Дети-подделки вроде отсюда не нужны.
+                        mcOnFreshFrame(buffer, pktLen, rssi, snr);
 
-                    // «Вторые уши»: свежий кадр можно переслать координатору по сети.
-                    // Хук срабатывает только для радио (forwarded-кадры уже прошли через
-                    // него на другом конце): повторять по WiFi то, что и так пришло по WiFi,
-                    // — замкнутый круг. Дети-подделки вроде отсюда не нужны.
-                    mcOnFreshFrame(buffer, pktLen, rssi, snr);
+                        MeshRxMeta meta;
+                        meta.origin = MESH_RX_RADIO;
+                        meta.rssi = rssi;
+                        meta.snr = snr;
+                        bool parsed = parseMeshCorePacket(buffer, pktLen, meta);
 
-                    MeshRxMeta meta;
-                    meta.origin = MESH_RX_RADIO;
-                    meta.rssi = rssi;
-                    meta.snr = snr;
-                    bool parsed = parseMeshCorePacket(buffer, pktLen, meta);
-
-                    // hex-экран только для GRP_TXT, который не расшифровался
-                    // (рекламные/служебные пакеты экран не трогаем) — рисует прошивка.
-                    #ifndef SENSOR_NODE
-                    if (pktLen > 0 && !parsed && !otaFastMode && ((buffer[0] >> 2) & 0x0F) == 0x05) {
-                        mcUiHexScreen(pktLen, rssi, snr, buffer);
-                        lastRxDisplay = millis();
-                    }
-                    #endif
-
-                    // не перезатираем экран 5 сек после сообщения
-                    if (parsed) {
-                        lastRxDisplay = millis();
-                        #if FEATURE_MQTT
-                        publishMessage();
+                        // hex-экран только для GRP_TXT, который не расшифровался
+                        // (рекламные/служебные пакеты экран не трогаем) — рисует прошивка.
+                        #ifndef SENSOR_NODE
+                        if (pktLen > 0 && !parsed && !otaFastMode && ((buffer[0] >> 2) & 0x0F) == 0x05) {
+                            mcUiHexScreen(pktLen, rssi, snr, buffer);
+                            lastRxDisplay = millis();
+                        }
                         #endif
+
+                        // не перезатираем экран 5 сек после сообщения
+                        if (parsed) {
+                            lastRxDisplay = millis();
+                            #if FEATURE_MQTT
+                            publishMessage();
+                            #endif
+                        }
+                        lastReArmMs = millis();  // был приём — сброс AGC откладываем
+                        radio.startReceive();
                     }
-                    lastReArmMs = millis();  // был приём — сброс AGC откладываем
-                    radio.startReceive();
                 }
             } else {
                 // Захват сорвался (CRC и т.п.) — флаг RX_DONE мог остаться,
