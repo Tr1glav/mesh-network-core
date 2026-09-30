@@ -7,7 +7,8 @@
 
 uint8_t* findPeerPub(uint8_t hash) {
     for (int i = 0; i < PEER_CACHE_MAX; i++) {
-        if (peerCache[i].hash == hash && peerCache[i].pub[0] != 0) return peerCache[i].pub;
+        // Занятость слота — по явному признаку, а не по первому байту ключа: он бывает нулём.
+        if (peerCache[i].used && peerCache[i].hash == hash) return peerCache[i].pub;
     }
     return NULL;
 }
@@ -16,9 +17,13 @@ void rememberPeerPub(uint8_t hash, const uint8_t* pub) {
     int slot = -1;
     uint32_t oldest = 0xFFFFFFFF;
     for (int i = 0; i < PEER_CACHE_MAX; i++) {
-        if (peerCache[i].hash == hash) { slot = i; break; }
+        // Своя запись — обновляем её; иначе вытесняем самую старую. Свободный слот выигрывает
+        // сам: last_seen у него нулевой, старше не бывает.
+        if (peerCache[i].used && peerCache[i].hash == hash) { slot = i; break; }
+        if (!peerCache[i].used) { slot = i; break; }
         if (peerCache[i].last_seen < oldest) { oldest = peerCache[i].last_seen; slot = i; }
     }
+    peerCache[slot].used = true;
     peerCache[slot].hash = hash;
     memcpy(peerCache[slot].pub, pub, 32);
     peerCache[slot].last_seen = millis();
