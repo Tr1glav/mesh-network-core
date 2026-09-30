@@ -77,6 +77,7 @@ bool otaSlowStart(const String& target);
 bool otaStartSessionSlow(const String& target);
 void otaSlowTick();                       // шаг отправителя, из главного цикла
 void otaSlowOnAck(uint32_t next);         // подтверждение узла: «жду чанк N»
+void otaSlowOnHello();                    // heartbeat из канала: запомнить версию цели
 void otaSlowDone(bool ok, const char* why);
 extern bool otaSlowFinishedOk;            // итог последней медленной сессии (для страницы)
 void otaSlowAbort(const char* why);
@@ -91,6 +92,16 @@ bool otaSlowStreamBegin(uint32_t total, uint32_t crc);
 bool otaSlowStreamFeed(const uint8_t* data, size_t n, bool last);
 bool otaSlowStreamEnd(bool apply);
 #endif
+
+// Для экрана принимающего узла: «получено N чанков из M». Знаменатель и единицу знает только
+// ядро, поэтому и спрашивает экран его, а не делит байты сам.
+//
+// Объявлено без условий и определено вне блоков ролей — как общий предикат занятости: экранный
+// код есть у обеих ролей (переопределение `mcUiOtaSensorProgress()` не обёрнуто в `#if`), и
+// при обёртке координатор собрался бы, но не нашёл бы функций. У раздающей роли оба значения
+// нулевые — принял она ноль чанков.
+uint32_t otaSlowRxChunksGot();
+uint32_t otaSlowRxChunksTotal();
 
 #if FEATURE_MESH_OTA_RECEIVER
 void otaSensorDraw();

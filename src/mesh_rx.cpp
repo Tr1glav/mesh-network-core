@@ -498,6 +498,13 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         #if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
         sensorRegistryNote();
         #endif
+        #if FEATURE_MESH_OTA_SENDER
+        // Heartbeat разобран выше, в lastHello. Медленной сессии он важен как доказательство
+        // применения образа: узел шлёт привет сразу после включения, то есть сразу после
+        // перезагрузки в новую прошивку. Стоит рядом с разбором, а не в otaSlowTick,
+        // потому что отсюда версия и берётся — и версия нужна вся, а не «изменилась ли».
+        otaSlowOnHello();
+        #endif
         #if FEATURE_MQTT
         bool snsPub = publishSensorMessage();
         mcUiSensorRx(snsPub, lastRSSI);

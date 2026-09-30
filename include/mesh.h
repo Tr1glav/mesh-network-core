@@ -120,6 +120,11 @@ void meshRelayTick();
 #if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
 void sensorRegistryNote();
 #endif
+// Версия образа, последний раз услышанная от узла (пусто, если его нет в реестре). Отдельная
+// функция, а не поле: слот в реестре — дело ядра, и снаружи его не видно.
+#if FEATURE_MESH_OTA_SENDER
+String sensorVersionOf(const String& name);
+#endif
 
 // forward decls referenced from parseMeshCorePacket
 #if FEATURE_MESH_OTA_SENDER

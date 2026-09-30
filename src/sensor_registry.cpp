@@ -114,4 +114,15 @@ void sensorRegistryNote() {
     if (lastHello.batPct.length() > 0) sensorBattery[idx] = lastHello.batPct.toInt();
 }
 
+// Версия образа, которую узел называл последний раз. Поиск только по существующим записям:
+// sensorSlot() не годится — он заводит запись, и чтение версии от узла, которого в реестре
+// нет, создавало бы фантом на странице и в MQTT, а в полном реестре ещё и вытесняло бы
+// кого-то живого. Нужно медленной сессии: она начинается, не зная, что было у цели, и
+// сравнивает это с тем, что услышала после.
+String sensorVersionOf(const String& name) {
+    for (int i = 0; i < sensorDeviceDiscCount; i++)
+        if (sensorDeviceDisc[i] == name) return sensorFwVersion[i];
+    return String();
+}
+
 #endif // FEATURE_MESH_OTA_SENDER || FEATURE_MQTT

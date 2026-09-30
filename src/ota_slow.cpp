@@ -34,6 +34,25 @@ static File otaSlowFile;
 // сессия не двигалась и умирала по числу повторов. Сбрасывается в otaSlowStart.
 static uint32_t otaSlowSent = 0;
 
+// Отзывался ли узел в этой сессии хоть раз — любым подтверждением. Нужен ровно для одного
+// решения: повторять ли вместе с окном сам старт сессии. Пока узел не отозвался, самое
+// вероятное объяснение — он не услышал ota:slow: и потому не в сессии вовсе: чанки для него
+// чужие сообщения, он их молча выбрасывает, а мы двадцать раз повторяем окно в пустоту.
+// Считать по otaSlowAcked нельзя: узел, ответивший «жду 0», оставляет его нулём.
+static bool otaSlowHeard = false;
+
+// Версия образа цели ДО сессии и версия, услышанная от неё ВО ВРЕМЯ сессии. Разошлись —
+// значит узел перезагрузился в новую прошивку, то есть образ применён, даже если ota:sdone
+// до нас не дошёл. Обе запоминаются, а вывод делается позже и в одном месте: heartbeat
+// мог прийти ДО того, как докатилось последнее подтверждение, и версия, услышанная в
+// неподходящий момент, не должна теряться.
+//
+// otaSlowTargetVer пуст — узла мы до сессии ни разу не услышали, сравнивать не с чем, и
+// запасного пути тогда нет: ждём ota:sdone как обычно. Это осознанный отказ от догадок,
+// а не недосмотр: объявлять прошивку успешной по любому heartbeat в канале нельзя.
+static String otaSlowTargetVer;
+static String otaSlowSeenVer;
+
 // Экран ведущего. Хук тот же, что у быстрого режима: человеку не нужно различать режимы по
 // виду экрана. Не чаще OTA_DRAW_MS — перерисовка OLED по I2C стоит около 25 мс.
 static void otaSlowDraw() {
@@ -68,6 +87,21 @@ void otaSlowAbort(const char* why) {
     sensorSendMsg(msg);
 }
 
+// Объявление сессии узлу. Вынесено отдельно, потому что зовётся дважды: на старте и на
+// повторе окна, пока узел не отозвался. Одиночной посылкой, как чанки и подтверждения:
+// старт — тоже рукопожатие, узел отвечает через OTA_SLOW_ACK_DELAY_MS, то есть пока флуд
+// слал бы вторую и третью копию (1–2.3 с на копию, до 4.6 с на весь флуд), его
+// подтверждение падало бы в занятый эфир. Маятник «в канале говорит только один» ломался
+// ровно на старте сессии.
+static void otaSlowSendStart() {
+    char msg[96];
+    snprintf(msg, sizeof(msg), "%s%s:%u:%08X:%u", OTA_SLOW_MSG_START, otaSlowTarget.c_str(),
+             (unsigned)otaSlowTotal, (unsigned)otaSlowCrc, (unsigned)otaSlowChunks);
+    sensorSendMsg(msg, 0, 1);
+    slog("[SLOW] старт -> '%s': %u байт, %u чанков по %d\n", otaSlowTarget.c_str(),
+         (unsigned)otaSlowTotal, (unsigned)otaSlowChunks, (int)OTA_SLOW_CHUNK_BYTES);
+}
+
 bool otaSlowStart(const String& target) {
     if (otaAnySessionActive()) return false;   // и быстрая, и уже идущая медленная
     if (sensorChannelIdx < 0) {
@@ -94,6 +128,9 @@ bool otaSlowStart(const String& target) {
     otaSlowChunks  = (zsize + OTA_SLOW_CHUNK_BYTES - 1) / OTA_SLOW_CHUNK_BYTES;
     otaSlowSeq     = 0;
     otaSlowSent    = 0;
+    otaSlowHeard   = false;
+    otaSlowTargetVer = sensorVersionOf(target);
+    otaSlowSeenVer   = "";
     otaSlowAcked   = 0;
     otaSlowRetries = 0;
     otaSlowOn      = true;
@@ -107,17 +144,7 @@ bool otaSlowStart(const String& target) {
     // «[OTA] poll seq=1158» и «abort (no response)»: медленная сессия будила быструю, и та
     // её же и убивала. Ход медленного режима страница берёт из otaSlow* напрямую.
 
-    char msg[96];
-    snprintf(msg, sizeof(msg), "%s%s:%u:%08X:%u", OTA_SLOW_MSG_START, target.c_str(),
-             (unsigned)otaSlowTotal, (unsigned)otaSlowCrc, (unsigned)otaSlowChunks);
-    // Одной посылкой, как чанки и подтверждения. Старт — тоже рукопожатие: узел отвечает
-    // через OTA_SLOW_ACK_DELAY_MS, то есть пока флуд шлёт вторую и третью копию (с паузой
-    // флуда это 1–2.3 с и до 4.6 с на весь флуд), его подтверждение падает в занятый эфир.
-    // Маятник «в канале говорит только один» для этого нарушался ровно на старте сессии.
-    // Потерянное подтверждение не страшно: окно повторяется целиком, попыток много.
-    sensorSendMsg(msg, 0, 1);
-    slog("[SLOW] старт -> '%s': %u байт, %u чанков по %d\n", target.c_str(),
-         (unsigned)otaSlowTotal, (unsigned)otaSlowChunks, (int)OTA_SLOW_CHUNK_BYTES);
+    otaSlowSendStart();
     return true;
 }
 
@@ -125,6 +152,9 @@ bool otaSlowStart(const String& target) {
 // отправитель, чтобы двинуть окно.
 void otaSlowOnAck(uint32_t next) {
     if (!otaSlowOn) return;
+    // Узел отозвался — значит он в сессии и старт повторять больше незачем. Отмечаем ДО
+    // разбора номера: важен сам факт ответа, а не то, двинулось ли окно.
+    otaSlowHeard = true;
     if (next > otaSlowChunks) next = otaSlowChunks;
     if (next > otaSlowSeq) {
         otaSlowSeq = next;
@@ -142,6 +172,35 @@ void otaSlowOnAck(uint32_t next) {
     }
 }
 
+// Heartbeat из сенсорного канала. Пока идёт сессия, запоминаем версию ЦЕЛИ: после её
+// перезагрузки в новую прошивку heartbeat придёт уже с новой версией, и это всё, что
+// останется, если ota:sdone потеряется. Вывод делает otaSlowAppliedByHello() — здесь
+// только запоминание, чтобы версия, услышанная до последнего подтверждения, не пропала.
+//
+// От чужих отличаемся именем отправителя, пустую версию не берём: узел постарше шлёт в
+// heartbeat просто «hello», и это ничего не говорит о том, перезагружался ли он.
+void otaSlowOnHello() {
+    if (!otaSlowOn) return;
+    if (lastSender != otaSlowTarget) return;
+    if (!lastHello.isHello || lastHello.ver.length() == 0) return;
+    otaSlowSeenVer = lastHello.ver;
+}
+
+// Образ применён, а подтверждение не дошло. Решается здесь и только здесь, потому что
+// здесь известно главное условие: весь образ уже сдан и подтверждён узлом.
+//
+// Как это выглядит в жизни. Узел принял последний чанк, проверил образ, отправил ota:sdone
+// и перезагрузился в новую прошивку. Если ota:sdone потерялся — а он идёт через флуд в
+// момент, когда канал busiest за всю сессию, — ведущий двадцать повторов ждал подтверждения
+// и заканчивал самым бесполезным из возможных сообщений: «узел не подтверждает». То есть
+// успешная прошивка докладывалась как провал, и следующая попытка шла заново на уже
+// прошитый узел — а узел после первой попытки ещё и не в сессии, потому что он перезагрузился.
+static bool otaSlowAppliedByHello() {
+    if (otaSlowTargetVer.length() == 0) return false;   // до сессии версии не знали
+    if (otaSlowSeenVer.length() == 0) return false;      // heartbeat от цели ещё не было
+    return otaSlowSeenVer != otaSlowTargetVer;
+}
+
 void otaSlowDone(bool ok, const char* why) {
     if (!otaSlowOn) return;
     otaSlowOn = false;
@@ -152,6 +211,10 @@ void otaSlowDone(bool ok, const char* why) {
         mcUiOtaDone(otaSlowTarget);
         snprintf(otaNote, sizeof(otaNote), "%s прошит по каналу", otaSlowTarget.c_str());
         slog("[SLOW] ГОТОВО: %s применил образ\n", otaSlowTarget.c_str());
+        // why на успехе — не причина отказа, а чем итог подтверждён. У сессии, завершившейся
+        // по потерянному ota:sdone, подтверждение другое, и по журналу это обязано читаться:
+        // иначе «ГОТОВО» рядом с «узел не подтверждает» выглядит противоречием.
+        if (why && *why) slog("[SLOW] чем подтверждено: %s\n", why);
     } else {
         snprintf(otaLastErr, sizeof(otaLastErr), "медленный режим: %s", why ? why : "отказ");
         slog("[SLOW] отказ узла: %s\n", why ? why : "?");
@@ -180,6 +243,12 @@ void otaSlowTick() {
              (int)OTA_SLOW_MAX_RETRIES);
         otaSlowAckMs = 0;
         otaSlowNextMs = millis() + wait;
+        // Узел не отозвался ни разу — возможно, он просто не услышал объявление сессии.
+        // Тогда для него наши чанки не чанки, а чужие сообщения, и он выбрасывает их молча:
+        // окно можно повторять сколько угодно, ничего не изменится. Объявляем сессию заново.
+        // Повтор безопасен и позже: узел, который уже принимает ЭТОТ образ, от повторного
+        // объявления не начинает заново — он отвечает, где остановился (см. otaSlowRxStart).
+        if (!otaSlowHeard) otaSlowSendStart();
         return;
     }
 
@@ -187,6 +256,15 @@ void otaSlowTick() {
 
     // Всё отправлено и подтверждено — ждём, пока узел применит образ и скажет об этом.
     if (otaSlowSeq >= otaSlowChunks) {
+        // Подтверждение могло потеряться, а узел — уже перезагрузиться в новую прошивку и
+        // отметиться. Тогда образ применён, и ждать больше нечего: версию цели мы слышали
+        // и запомнили, otaSlowAppliedByHello() это и проверяет. Проверка стоит здесь, а не
+        // в разборе heartbeat, потому что «весь образ сдан» известно только тут.
+        if (otaSlowAppliedByHello()) {
+            otaSlowDone(true, "подтверждение потерялось, образ применён (услышана новая "
+                              "версия цели)");
+            return;
+        }
         otaSlowAckMs = millis() + OTA_SLOW_ACK_TIMEOUT_MS;
         return;
     }
@@ -225,6 +303,25 @@ void otaSlowTick() {
 
 #endif // FEATURE_MESH_OTA_SENDER
 
+// Какой чанк ждём — приёмная часть, но живёт здесь, а не внутри блока приёмника: счётчику
+// нужно быть видимым обеим ролям (см. otaSlowRxChunksGot ниже).
+uint32_t slowRxExpect = 0;
+
+// «Получено 812 из 2400» для экрана. Знаменатель берётся здесь, а не на экране, потому что
+// единица приёма медленной сессии — чанк по OTA_SLOW_CHUNK_BYTES, и знает её только ядро;
+// прошивка из otaGot/otaTotal может вывести только килобайты, а это другой вопрос.
+//
+// Именно чанки, а не байты и не кадры: `otaGot` — это записанные байты, `pkts` в хуке — сырые
+// кадры эфира вместе с повторами, и ни то, ни другое не показывает ход сессии. Повторы в
+// счётчик не попадают, потому что чанк с неверным номером отбрасывается до записи.
+//
+// Объявлено и определено БЕЗ условий — как общий предикат занятости (см. ota.h). Экранный
+// код есть у обеих ролей: переопределение `mcUiOtaSensorProgress()` в прошивке не обёрнуто
+// в `#if`, поэтому координатор тоже зовёт эти функции из своего кода. У координатора, который
+// образ только раздаёт, оба значения нулевые — и это честно: принял он ноль чанков.
+uint32_t otaSlowRxChunksGot() { return slowRxExpect; }
+uint32_t otaSlowRxChunksTotal() { return otaSlowChunks; }
+
 // ===== СТОРОНА УЗЛА =====
 // Принимает чанки из канала, разворачивает поток тем же распаковщиком, что и быстрый режим
 // (otaFeedStream), и подтверждает кумулятивно. Приём не требует переключения радио: это
@@ -232,7 +329,6 @@ void otaSlowTick() {
 // режима, где он сорок секунд глух ко всему, кроме чанков.
 #if FEATURE_MESH_OTA_RECEIVER
 
-static uint32_t slowRxExpect = 0;      // какой чанк ждём
 static unsigned long slowRxLastMs = 0; // когда пришёл последний
 static bool slowRxOn = false;
 static unsigned long slowRxAckDueMs = 0;   // когда отправить отложенное подтверждение
@@ -282,10 +378,45 @@ void otaSlowRxStart(const String& args) {
     if (p3 < 0) return;
     if (args.substring(0, p1) != cfg.name) return;    // не нам
 
-    otaSlowTotal  = (uint32_t)strtoul(args.substring(p1 + 1, p2).c_str(), NULL, 10);
-    otaSlowCrc    = (uint32_t)strtoul(args.substring(p2 + 1, p3).c_str(), NULL, 16);
-    otaSlowChunks = (uint32_t)strtoul(args.substring(p3 + 1).c_str(), NULL, 10);
-    if (otaSlowTotal == 0 || otaSlowChunks == 0) return;
+    const uint32_t total  = (uint32_t)strtoul(args.substring(p1 + 1, p2).c_str(), NULL, 10);
+    const uint32_t crc    = (uint32_t)strtoul(args.substring(p2 + 1, p3).c_str(), NULL, 16);
+    const uint32_t chunks = (uint32_t)strtoul(args.substring(p3 + 1).c_str(), NULL, 10);
+    if (total == 0 || chunks == 0) return;
+    // Размер приходит из эфира. Тот же предел, что у быстрого режима: с заведомо
+    // невозможным числом Update.begin() всё равно откажет, но по журналу было бы не понять,
+    // отказала память или образ объявлен чужой.
+    if (total > OTA_MAX_FW_BYTES) {
+        Serial.printf("[SLOW] отказ: объявлено %u байт, предел %u\n",
+                      (unsigned)total, (unsigned)OTA_MAX_FW_BYTES);
+        return;
+    }
+
+    // Объявление ТОГО ЖЕ образа во время приёма — это не «начать заново», а «ведущий нас не
+    // слышит». Он повторяет старт, пока не получит от нас ни одного подтверждения (см.
+    // otaSlowSendStart), и начинать поток с нуля тут означало бы выбросить часы уже
+    // принятого. Отвечаем, где остановились, и продолжаем с того же места.
+    //
+    // Отсюда же берётся продолжение сессии после перезагрузки ВЕДУЩЕГО: он объявляет тот же
+    // образ заново, мы называем свой номер чанка, и окно прыгает туда, а не в ноль.
+    if (slowRxOn) {
+        if (total == otaSlowTotal && crc == otaSlowCrc && chunks == otaSlowChunks) {
+            slowRxLastMs = millis();
+            slowRxAckLater();
+            Serial.printf("[SLOW] повтор объявления: продолжаем с чанка %u\n",
+                          (unsigned)slowRxExpect);
+            return;
+        }
+        // Образ другой — старую сессию закрываем молча. Молча потому, что ota:sfail сейчас
+        // сказал бы ведущему, что провалилась ЭТА сессия, а она только что началась.
+        Serial.println("[SLOW] объявлен другой образ — прежний приём закрыт");
+        otaSlowStreamEnd(false);
+        slowRxOn = false;
+        otaSlowOn = false;
+    }
+
+    otaSlowTotal  = total;
+    otaSlowCrc    = crc;
+    otaSlowChunks = chunks;
 
     if (!otaSlowStreamBegin(otaSlowTotal, otaSlowCrc)) {
         otaSlowRxAbort("no RAM");
@@ -312,10 +443,20 @@ void otaSlowRxData(const String& args) {
     slowRxLastMs = millis();
 
     // Не тот чанк, которого ждём: либо повтор уже записанного, либо кусок будущего окна.
-    // Записать его некуда — поток разворачивается строго по порядку, — поэтому просто
-    // напоминаем отправителю, с чего продолжать.
+    // Записать его некуда — поток разворачивается строго по порядку, — поэтому напоминаем
+    // отправителю, с чего продолжать.
+    //
+    // Напоминаем в ОБОИХ случаях, и это не симметрия ради красоты. Раньше на повтор уже
+    // записанного (seq < ожидаемого) узел молчал, и одно потерянное подтверждение вешало
+    // сессию намертво: ведущий переотправлял окно, которое узел давно принял, узел на эти
+    // чанки не отвечал, ведущий так и не узнавал, где узел на самом деле, — и сессия умирала
+    // по числу повторов. Повтор чанка и есть сигнал «он не знает, где я»: ровно так же
+    // переподтверждает дубликат TCP.
+    //
+    // Лавины ответов не будет: slowRxAckLater заявку вперёд не двигает, поэтому целое
+    // переотправленное окно даёт одно подтверждение, а не восемь.
     if (seq != slowRxExpect) {
-        if (seq > slowRxExpect) slowRxAckLater();
+        slowRxAckLater();
         return;
     }
 
