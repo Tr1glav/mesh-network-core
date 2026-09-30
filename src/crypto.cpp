@@ -53,8 +53,17 @@ int encryptGroupText(const uint8_t* secret32, uint8_t* dest, const uint8_t* src,
     return 2 + padded;
 }
 
+// Рабочий буфер расшифровки группового текста. Назван константой, чтобы предел длины и сам
+// буфер не разъехались: они обязаны меняться вместе.
+#define GROUP_TEXT_MAX 256
+
 String decryptGroupText(const uint8_t* secret32, uint8_t* mac, uint8_t* ciphertext, int len) {
     if (len <= 0 || len % 16 != 0) return "";
+    // Предел стоит ЗДЕСЬ, а не держится на вызывающем. Ниже расшифровка пишет в буфер ровно
+    // len байт; сегодня len не может превысить 240 (кадр в эфире короче), но это свойство
+    // единственного вызывающего, а не этой функции. Появится второй — по сети, из приложения,
+    // из тестов, — и переполнение стека станет тихим.
+    if (len > GROUP_TEXT_MAX) return "";
 
     // Проверяем HMAC-SHA256(ciphertext) с полным 32-байтным секретом
     uint8_t hmac_out[32];
@@ -68,7 +77,7 @@ String decryptGroupText(const uint8_t* secret32, uint8_t* mac, uint8_t* cipherte
     mbedtls_aes_init(&aes);
     mbedtls_aes_setkey_dec(&aes, secret32, 128);
 
-    uint8_t plaintext[256];
+    uint8_t plaintext[GROUP_TEXT_MAX];
     for (int i = 0; i < len; i += 16) {
         mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, ciphertext + i, plaintext + i);
     }
@@ -166,7 +175,12 @@ void jsonEscape(const char* in, char* out, size_t outlen) {
 char* fmtUdeg(int32_t udeg, char* buf, size_t n) {
     if (n == 0) return buf;
     const char* sign = "";
-    if (udeg < 0) { udeg = -udeg; sign = "-"; }
-    snprintf(buf, n, "%s%ld.%06ld", sign, (long)(udeg / 1000000), (long)(udeg % 1000000));
+    // Знак снимается в 32-битном БЕЗ знака, а не через -udeg: при INT32_MIN у знакового
+    // отрицания нет результата в типе (неопределённое поведение), и компилятор вправе
+    // выкинуть проверку целиком. Значение приходит из NMEA и из настроек, то есть извне.
+    uint32_t mag = (uint32_t)udeg;
+    if (udeg < 0) { mag = (uint32_t)0 - mag; sign = "-"; }
+    snprintf(buf, n, "%s%lu.%06lu", sign, (unsigned long)(mag / 1000000),
+             (unsigned long)(mag % 1000000));
     return buf;
 }
