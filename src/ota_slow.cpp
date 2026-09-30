@@ -27,6 +27,13 @@
 
 static File otaSlowFile;
 
+// Какой чанк окна уходит следующим. На уровне файла, а не статической внутри otaSlowTick:
+// та переживала сессию, и сброс `if (sent < otaSlowSeq || sent >= inWindow)` вторую сессию
+// не спасал — при otaSlowSeq = 0 и оставшемся от прерванной сессии значении 1…7 оба условия
+// ложны, и окно начинало уходить не с нулевого чанка. Узел ждал нулевой, отвечал «жду 0»,
+// сессия не двигалась и умирала по числу повторов. Сбрасывается в otaSlowStart.
+static uint32_t otaSlowSent = 0;
+
 // Экран ведущего. Хук тот же, что у быстрого режима: человеку не нужно различать режимы по
 // виду экрана. Не чаще OTA_DRAW_MS — перерисовка OLED по I2C стоит около 25 мс.
 static void otaSlowDraw() {
@@ -76,10 +83,17 @@ bool otaSlowStart(const String& target) {
     // CRC распакованного образа берутся из заголовка — узел проверит ими то, что собрал.
     const uint32_t zsize = (uint32_t)otaSlowFile.size() - OTA_Z_HDR;
     otaSlowTarget  = target;
-    otaSlowTotal   = otaFwSize;
+    // Узлу объявляется размер РАСПАКОВАННОГО образа (otaImgSize), а не длина сжатого потока
+    // (otaFwSize). Здесь стоял otaFwSize, и медленная прошивка не могла завершиться ни при
+    // каких условиях: приёмник открывал раздел под сжатый размер, otaWriteImage обрезал по
+    // нему распакованный поток, длина сходилась ровно, а CRC32 считается по полному образу и
+    // не совпадал никогда. Сколько байт уедет в эфир, узлу говорит otaSlowChunks ниже —
+    // размер в этом поле нужен ему для Update.begin() и для проверки того, что он собрал.
+    otaSlowTotal   = otaImgSize;
     otaSlowCrc     = otaFwCrc;
     otaSlowChunks  = (zsize + OTA_SLOW_CHUNK_BYTES - 1) / OTA_SLOW_CHUNK_BYTES;
     otaSlowSeq     = 0;
+    otaSlowSent    = 0;
     otaSlowAcked   = 0;
     otaSlowRetries = 0;
     otaSlowOn      = true;
@@ -179,11 +193,10 @@ void otaSlowTick() {
 
     // Окно: сколько чанков ушло с последнего подтверждения.
     const uint32_t inWindow = otaSlowSeq + OTA_SLOW_WINDOW;
-    static uint32_t sent = 0;
-    if (sent < otaSlowSeq || sent >= inWindow) sent = otaSlowSeq;
+    if (otaSlowSent < otaSlowSeq || otaSlowSent >= inWindow) otaSlowSent = otaSlowSeq;
 
     uint8_t raw[OTA_SLOW_CHUNK_BYTES];
-    const int n = otaSlowReadChunk(sent, raw);
+    const int n = otaSlowReadChunk(otaSlowSent, raw);
     if (n <= 0) { otaSlowAbort("образ не читается"); return; }
 
     // base64: hex удвоил бы объём, а образ и без того едет часами.
@@ -194,15 +207,15 @@ void otaSlowTick() {
         return;
     }
     char msg[OTA_SLOW_CHUNK_BYTES * 2 + 24];
-    snprintf(msg, sizeof(msg), "%s%u:%.*s", OTA_SLOW_MSG_DATA, (unsigned)sent,
+    snprintf(msg, sizeof(msg), "%s%u:%.*s", OTA_SLOW_MSG_DATA, (unsigned)otaSlowSent,
              (int)b64len, (const char*)b64);
     // Одной посылкой, без повторов: окно и так повторяется целиком, а лишняя копия каждого
     // чанка удвоила бы и без того долгую сессию.
     sensorSendMsg(msg, 0, 1);
 
-    sent++;
+    otaSlowSent++;
     otaSlowDraw();
-    if (sent >= inWindow || sent >= otaSlowChunks) {
+    if (otaSlowSent >= inWindow || otaSlowSent >= otaSlowChunks) {
         // Окно кончилось — ждём подтверждения.
         otaSlowAckMs = millis() + OTA_SLOW_ACK_TIMEOUT_MS;
     } else {
@@ -326,20 +339,30 @@ void otaSlowRxData(const String& args) {
     if (slowRxExpect >= otaSlowChunks || (slowRxExpect % OTA_SLOW_WINDOW) == 0) slowRxAckLater();
 
     if (slowRxExpect >= otaSlowChunks) {
+        // Сначала ПРОВЕРЯЕМ образ, и только потом подтверждаем и гасим флаги. Порядок был
+        // обратный, и это стоило медленному режиму всякой диагностики: подтверждение
+        // последнего чанка уходило до проверки, флаг slowRxOn гасился до вызова
+        // otaSlowRxAbort — а тот на первой строке делает `if (!slowRxOn) return;`. В итоге
+        // при несошедшемся образе в эфир не уходило ни ota:sfail, ни что-либо ещё, а ведущий,
+        // уже считавший образ доставленным, двадцать повторов ждал ota:sdone и заканчивал
+        // самым бесполезным из возможных сообщений — «узел не подтверждает».
+        const bool ok = otaSlowStreamEnd(true);
+        if (!ok) {
+            // slowRxOn ещё поднят, поэтому отказ дойдёт до ведущего и до экрана.
+            otaSlowRxAbort("образ не сошёлся");
+            return;
+        }
+        // Подтверждаем только проверенный образ: «принял всё» на несошедшемся образе — это
+        // ложь в эфир, по которой ведущий заканчивает сессию довольным.
         slowRxAckNow();       // последнее подтверждение шлём без паузы: ждать уже нечего
         slowRxOn = false;
         otaSlowOn = false;
-        const bool ok = otaSlowStreamEnd(true);
         char msg[64];
-        if (ok) {
-            snprintf(msg, sizeof(msg), "%s%s", OTA_SLOW_MSG_DONE, cfg.name.c_str());
-            sensorSendMsg(msg);
-            Serial.printf("[SLOW] образ принят и проверен — применяю\n");
-            delay(400);           // дать сообщению уйти в эфир до перезагрузки
-            ESP.restart();
-        } else {
-            otaSlowRxAbort("crc mismatch");
-        }
+        snprintf(msg, sizeof(msg), "%s%s", OTA_SLOW_MSG_DONE, cfg.name.c_str());
+        sensorSendMsg(msg);
+        Serial.printf("[SLOW] образ принят и проверен — применяю\n");
+        delay(400);           // дать сообщению уйти в эфир до перезагрузки
+        ESP.restart();
     }
 }
 
