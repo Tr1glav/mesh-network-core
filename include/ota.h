@@ -33,7 +33,9 @@ void otaSendEnd();
 void otaHandleAck();
 void otaBotTick();
 void otaInspectStoredFw();
+// Идёт сессия быстрого режима. Нужно только там, где важна именно его машина состояний.
 bool otaSessionActive();
+
 // Запуск прошивки сенсора без участия веб-запроса — нужен автообновлению
 bool otaStartSession(const String& target);
 // Достижим ли узел для сессии по радио при таком числе хопов (0xFF — ни разу не слышали).
@@ -99,3 +101,10 @@ void otaSensorHandle();
 void otaHandleRawSensor(const uint8_t* buf, int len);
 #endif
 void otaHandleRawFrame(const uint8_t* buf, int len);
+
+// Идёт ЛЮБАЯ сессия прошивки — в любой роли, раздаём мы образ или принимаем. Это то, что
+// нужно спрашивать перед выходом в эфир, перед записью в раздел прошивки или в /ota.bin и
+// перед перезагрузкой. Объявлено без условий и определено вне блока отправителя: приёмнику
+// нужно не меньше (см. ota.cpp). Для машины состояний быстрого режима есть отдельный
+// otaSessionActive() — его спрашивают только там, где важна именно фаза.
+bool otaAnySessionActive();

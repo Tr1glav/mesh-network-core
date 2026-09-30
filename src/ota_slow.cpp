@@ -69,7 +69,7 @@ void otaSlowAbort(const char* why) {
 }
 
 bool otaSlowStart(const String& target) {
-    if (otaSlowOn || otaSessionActive()) return false;
+    if (otaAnySessionActive()) return false;   // и быстрая, и уже идущая медленная
     if (sensorChannelIdx < 0) {
         strlcpy(otaLastErr, "канал сенсоров не настроен", sizeof(otaLastErr));
         return false;
