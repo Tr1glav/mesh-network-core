@@ -84,11 +84,6 @@ bool mcWifiConnected() {
     return false;
 }
 
-__attribute__((weak))
-String mcLocalIp() {
-    return String("0.0.0.0");
-}
-
 // ===== «ВТОРЫЕ УШИ» =====
 __attribute__((weak))
 void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {
