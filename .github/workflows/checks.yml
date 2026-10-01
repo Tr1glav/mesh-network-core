@@ -1,0 +1,46 @@
+name: checks
+
+# У ядра до этого не было ни CI, ни своей сборки — при том что именно здесь протокол, крипто
+# и разбор кадров. Проверки ядра существуют (mcselftest/suite_core.py идёт для ЛЮБОЙ цели), но
+# запускались только из CI прошивок: правка ядра всплывала на чужой сборке и не всегда скоро.
+#
+# Своего PlatformIO у ядра нет (это библиотека), поэтому собирать здесь нечего. Зато проверки
+# ядра прогоняются целиком: они вырезают функции из исходников и собирают их хостовым g++.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      # Ядро и проверки лежат в workspace рядом: selftest.py ищет ядро соседним каталогом
+      # (так же, как platformio.ini прошивок подключает его через symlink://..).
+      - uses: actions/checkout@v4
+        with:
+          path: mesh-network-core
+
+      # Набор проверок берём с его рабочей ветки: ядро не объявляет версию проверок (это
+      # прошивки делают своим tools.ref), а гонять правку ядра имеет смысл против актуальных
+      # проверок — иначе новая ошибка в ядре пройдёт против старого набора.
+      - uses: actions/checkout@v4
+        with:
+          repository: Tr1glav/mesh-network-tools
+          ref: prod
+          path: mesh-network-tools
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Цель core означает «ни одной прошивки рядом нет». Кросс-репозиторные проверки обязаны
+      # это переживать молча — за этим следит suite_meta.solo_tree_test.
+      - name: Проверки ядра
+        working-directory: mesh-network-tools
+        run: python3 selftest.py --target core
