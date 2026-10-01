@@ -3,6 +3,7 @@
 #include "globals.h"   // otaActive: во время прошивки по радио перезагружаться нельзя
 #include "crypto.h"    // fmtFix/parseFixed: печать и разбор чисел без float-printf
 #include "mesh.h"
+#include "ota.h"      // otaAnySessionActive: очередь ответа молчит, пока идёт прошивка
 #include <Preferences.h>
 #include <esp_random.h>   // esp_fill_random: seed личности узла
 
@@ -306,6 +307,40 @@ static void cfgHandleLine(String line) {
 }
 
 #ifdef SENSOR_NODE
+// ===== Очередь частей ответа на "cfg get" =====
+// Устроена так же, как очередь настроек на странице координатора (webTick): отправляет не
+// разбор команды, а главный цикл, когда истечёт пауза. Иначе ответ стоил бы узлу полутора
+// секунд блокировки на каждую часть.
+static String cfgReplyQueue[CFG_REPLY_QUEUE_MAX];
+static uint8_t cfgReplyHead = 0;
+static uint8_t cfgReplyCount = 0;
+static unsigned long cfgReplyNextMs = 0;
+
+static void cfgReplyPush(const String& msg) {
+    if (cfgReplyCount >= CFG_REPLY_QUEUE_MAX) {
+        // Молча терять часть ответа нельзя: читающий получит набор настроек с дырой и не
+        // узнает об этом. Очередь на шесть частей, а полный набор укладывается в две-три.
+        Serial.println("[CFG] очередь ответа полна — часть отброшена");
+        return;
+    }
+    cfgReplyQueue[(cfgReplyHead + cfgReplyCount) % CFG_REPLY_QUEUE_MAX] = msg;
+    cfgReplyCount++;
+}
+
+void cfgReplyTick() {
+    if (cfgReplyCount == 0) return;
+    // Идёт прошивка по радио — эфир занят целиком, очередь ждёт. Ответ на «cfg get» никуда не
+    // торопится, а чанк, потерянный из-за него, стоит повтора всего окна.
+    if (otaAnySessionActive()) return;
+    if (cfgReplyNextMs != 0 && (long)(millis() - cfgReplyNextMs) < 0) return;
+    String msg = cfgReplyQueue[cfgReplyHead];
+    cfgReplyQueue[cfgReplyHead] = String();   // не держим текст дольше нужного
+    cfgReplyHead = (cfgReplyHead + 1) % CFG_REPLY_QUEUE_MAX;
+    cfgReplyCount--;
+    sensorSendMsg(msg.c_str(), 0, 1);
+    cfgReplyNextMs = millis() + CFG_REPLY_GAP_MS;
+}
+
 // millis() последней правки по радио, ещё не подтверждённой "save"; 0 — таких нет
 static unsigned long cfgPendingSince = 0;
 
@@ -329,23 +364,33 @@ void cfgHandleMeshCfg(const String& rest) {
         // Один компактный ответ вместо двух десятков сообщений; секреты не отдаём.
         // Пустые поля пропускаем: у сенсора не заданы WiFi, MQTT и приватный канал, а
         // "(пусто)" занимает 12 байт в UTF-8 и вытесняло из ответа всё интересное.
-        // Всё не влезает в одно групповое сообщение (лимит ~200 символов), поэтому шлём
-        // частями с паузой: пока сенсор передаёт, он не слышит, и бот тоже должен успеть
-        // принять предыдущую часть.
-        String out = "cfg:val:";
+        //
+        // Всё не влезает в одно групповое сообщение, поэтому ответ уходит частями — но КЛАДЁТСЯ
+        // В ОЧЕРЕДЬ, а не отправляется здесь с delay(). Раньше между частями стоял delay(1500)
+        // прямо в разборе команды: на каждую часть узел на полторы секунды перестаёт обслуживать
+        // радио, сторожа сессий прошивки и свои задачи, — а частей бывает три.
+        const char* PREFIX = "cfg:val:";
+        String out = PREFIX;
         for (size_t i = 0; i < FIELD_COUNT; i++) {
             if (FIELDS[i].secret) continue;
             String v = cfgValueStr(FIELDS[i], false);
             if (v.length() == 0 || v == "(пусто)") continue;
             String piece = String(FIELDS[i].cmd) + "=" + v + ";";
-            if (out.length() + piece.length() > 180) {
-                sensorSendMsg(out.c_str(), 0, 1);
-                delay(1500);
-                out = "cfg:val:";
+            // Одно поле длиннее целой части: раньше его отправляли как есть, и ответ вылезал за
+            // предел молча. Обрезаем значение и помечаем обрезку, чтобы читающий это видел.
+            const int room = (int)CFG_GET_PART_MAX - (int)strlen(PREFIX);
+            if ((int)piece.length() > room) {
+                piece = piece.substring(0, room - 3) + "..;";
+            }
+            // Предел проверяется ПОСЛЕ добавления: именно порядок «сначала добавить, потом
+            // смотреть» и давал части длиннее предела.
+            if (out.length() + piece.length() > CFG_GET_PART_MAX) {
+                cfgReplyPush(out);          // в очередь уходит только непустая часть
+                out = PREFIX;
             }
             out += piece;
         }
-        if (out.length() > 8) sensorSendMsg(out.c_str(), 0, 1);
+        if (out.length() > strlen(PREFIX)) cfgReplyPush(out);
         return;
     }
     int eq = rest.indexOf('=');
