@@ -37,16 +37,20 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
 int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex = true);
 // Пауза между копиями флуда: случайная величина из FLOOD_RETRY_MIN_MS…MAX_MS плюс
 // FLOOD_JITTER_MS разброса поверх, чтобы соседи не повторяли копии синхронно.
-// gapMs = 0 — «пауза по конфигурации»; своё значение вызывающий код задаёт только когда
-// ему нужна именно такая база. Объявлена здесь, потому что ею пользуются и sendAdvert,
-// и floodSend.
+// 0 — «пауза по конфигурации»; своё значение вызывающий код задаёт только когда ему нужна
+// именно такая БАЗА. Объявлена здесь, потому что ею пользуются и sendAdvert, и floodSend.
+//
+// Параметр называется gapBaseMs, а не gapMs, и это важно. Раньше он назывался gapMs, то есть
+// «пауза», а смысл у него другой с тех пор, как паузу стали брать из всего диапазона флуда:
+// переданное значение — лишь БАЗА, которую зажимают в FLOOD_RETRY_MIN_MS…MAX_MS. Вызывающий,
+// попросивший 20 мс, молча получал не меньше 1000. Имя теперь говорит, что это база.
 unsigned int floodGapMs(unsigned int baseMs = 0);
 // Одно и то же сообщение уходит в эфир FLOOD_REPEATS раз, с паузой между копиями
 // разнесённой случайно. Пауза заведомо больше времени в эфире, поэтому чужая помеха
 // накрывает одну копию, а не все сразу; см. FLOOD_RETRY_* в config.h.
-void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs = 0,
+void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs = 0,
                int repeats = FLOOD_REPEATS);
-void sensorSendMsg(const char* msg, unsigned int gapMs = 0, int repeats = FLOOD_REPEATS);
+void sensorSendMsg(const char* msg, unsigned int gapBaseMs = 0, int repeats = FLOOD_REPEATS);
 // Сообщение, которое может дословно повториться, — с номером отправки. Без него два
 // одинаковых повтора в одну секунду дают одинаковый шифротекст, а значит и одинаковый хэш:
 // сеть отбросила бы второй как дубликат. Номер читатель убирает (см. sensorSendMsgUnique).

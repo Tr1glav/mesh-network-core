@@ -9,7 +9,7 @@
 // Выделено из mesh.cpp: объявление себя в сети, сборка группового и личного кадра,
 // повторы флуда и сообщения узла (heartbeat, проверка связи, синхронизация времени).
 
-// Пауза перед следующей копией. Свою базу вызывающий код может задать (gapMs),
+// Пауза перед следующей копией. Свою базу вызывающий код может задать (gapBaseMs),
 // а может не задавать — тогда пауза берётся из всего заявленного диапазона
 // FLOOD_RETRY_MIN_MS…MAX_MS плюс FLOOD_JITTER_MS разброса сверху, чтобы соседи не
 // повторяли копии синхронно.
@@ -145,20 +145,20 @@ int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
     return txFrame((uint8_t*)frame, f);
 }
 
-void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapMs, int repeats) {
+void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
     for (int i = 0; i < repeats; i++) {
         if (chIdx >= 0) sendFrame(chIdx, frame, f, i == 0);
         else            txFrame((uint8_t*)frame, f);
         // Пауза перед следующей копией набирается заново для каждой: одинаковые паузы снова
         // собрали бы копии в один залп, и одна помеха убила бы их все. Разброс поверх
-        // gapMs нужен ещё и для того, чтобы два узла, начавшие передачу вместе, не повторяли
+        // gapBaseMs нужен ещё и для того, чтобы два узла, начавшие передачу вместе, не повторяли
         // копии синхронно.
-        if (i < repeats - 1) delay(floodGapMs(gapMs));
+        if (i < repeats - 1) delay(floodGapMs(gapBaseMs));
     }
 }
 
-void sensorSendMsg(const char* msg, unsigned int gapMs, int repeats) {
+void sensorSendMsg(const char* msg, unsigned int gapBaseMs, int repeats) {
     if (sensorChannelIdx < 0) {
         Serial.printf("[SNS] sensor channel not configured, cannot send \"%s\"\n", msg);
         return;
@@ -166,7 +166,7 @@ void sensorSendMsg(const char* msg, unsigned int gapMs, int repeats) {
     uint8_t frame[256];
     int f = buildGroupFrameFlood(sensorChannelIdx, msg, frame, sizeof(frame));
     if (f <= 0) return;
-    floodSend(-1, frame, f, gapMs, repeats);
+    floodSend(-1, frame, f, gapBaseMs, repeats);
     Serial.printf("[SNS] sent \"%s\" to sensor channel\n", msg);
     #ifdef COMPANION_NODE
     // Собственные передачи в приложение иначе не попадают: в очередь кладётся только
