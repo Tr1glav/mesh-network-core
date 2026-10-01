@@ -84,6 +84,16 @@ bool mcWifiConnected() {
     return false;
 }
 
+// ===== ПЕРИОДИЧЕСКОЕ В ЦИКЛЕ УЗЛА =====
+__attribute__((weak))
+void mcUiTick() {}
+
+__attribute__((weak))
+void mcButtonTick() {}
+
+__attribute__((weak))
+void mcCompanionTick() {}
+
 // ===== «ВТОРЫЕ УШИ» =====
 __attribute__((weak))
 void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {
