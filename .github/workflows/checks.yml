@@ -67,29 +67,37 @@ jobs:
         with:
           path: mesh-network-core
 
-      # Публичный meshcore-fork выкачивается без токена, приватный tdeck — только с ним.
-      # Секрета может не быть (его кладёт владелец), и тогда ветку матрицы надо ПРОПУСТИТЬ с
-      # внятной записью в журнал, а не уронить: иначе красный CI ядра означал бы не поломку
-      # ядра, а отсутствие доступа, и на него перестали бы смотреть.
+      # Публичный meshcore-fork выкачивается штатным github.token, приватный tdeck — нет:
+      # github.token действует только на тот репозиторий, где идёт прогон. Доступ к нему даёт
+      # DEPLOY KEY, а не токен учётной записи: ключ привязан ровно к одному репозиторию и
+      # только на чтение, и отзывается одной кнопкой в его настройках. Личный токен со scope
+      # repo в секретах ПУБЛИЧНОГО репозитория дал бы доступ сразу ко всем репозиториям
+      # владельца — это и была причина выбора. Приватная половина ключа лежит в секрете
+      # CONSUMERS_SSH_KEY этого репозитория, публичная — в Settings → Deploy keys у tdeck.
+      #
+      # Секрета может не быть (ключ отозвали), и тогда ветку матрицы надо ПРОПУСТИТЬ с внятной
+      # записью в журнал, а не уронить: иначе красный CI ядра означал бы не поломку ядра, а
+      # отсутствие доступа, и на него перестали бы смотреть.
       - name: Доступ к потребителю
         id: gate
         env:
-          TOKEN: ${{ secrets.CONSUMERS_TOKEN }}
+          KEY: ${{ secrets.CONSUMERS_SSH_KEY }}
         run: |
-          if [ "${{ matrix.repo }}" != "tdeck" ] || [ -n "$TOKEN" ]; then
+          if [ "${{ matrix.repo }}" != "tdeck" ] || [ -n "$KEY" ]; then
             echo "ok=1" >> "$GITHUB_OUTPUT"
           else
             echo "ok=0" >> "$GITHUB_OUTPUT"
-            echo "::notice::tdeck приватный, секрета CONSUMERS_TOKEN нет — сборка этого потребителя пропущена"
+            echo "::notice::tdeck приватный, секрета CONSUMERS_SSH_KEY нет — сборка этого потребителя пропущена"
           fi
 
+      # Пустой ssh-key означает «ходить токеном»: так выкачивается публичный meshcore-fork.
       - uses: actions/checkout@v4
         if: steps.gate.outputs.ok == '1'
         with:
           repository: Tr1glav/${{ matrix.repo }}
           ref: ${{ matrix.branch }}
           path: ${{ matrix.repo }}
-          token: ${{ secrets.CONSUMERS_TOKEN || github.token }}
+          ssh-key: ${{ matrix.repo == 'tdeck' && secrets.CONSUMERS_SSH_KEY || '' }}
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.ok == '1'
