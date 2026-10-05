@@ -3,7 +3,8 @@
 #include "mesh.h"
 #include "ota.h"
 #include "appconfig.h"
-#include "mc_platform.h"   // mcUiTick / mcButtonTick / mcCompanionTick: платформенная часть
+#include "mc_platform.h"   // mcUiTick / mcCompanionTick: платформенная часть
+#include "button.h"        // кнопка: логика в ядре, пин и прерывание — за хуками
 #include "sensor_tasks.h"
 
 // ===== Периодические задачи узла =====
@@ -61,7 +62,14 @@ void sensorTasksTick() {
             sensorSendHello();
         }
     }
-    mcButtonTick();    // кнопка: счёт нажатий и переключение экрана, без блокировки
+    // Кнопка зовётся напрямую, а не хуком: её логика с 5 октября 2026 живёт в ядре
+    // (src/button.cpp), и за хуками остались только пин, уровень и переключение экрана.
+    // Хук mcButtonTick здесь был и удалён — он стал пустой пересылкой из прошивки в ядро, а
+    // хук «на всякий случай» стоит ровно столько же обязательств, сколько настоящий. Платы без
+    // кнопки отсекает признак сборки, как и раньше.
+    #if FEATURE_BUTTON
+    buttonTick();      // счёт нажатий и переключение экрана, без блокировки
+    #endif
 }
 
 #endif // FEATURE_SENSOR

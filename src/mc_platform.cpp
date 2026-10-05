@@ -55,6 +55,10 @@ __attribute__((weak))
 void screenWake() {
 }
 
+__attribute__((weak))
+void mcScreenToggle() {
+}
+
 // ===== БАТАРЕЯ =====
 __attribute__((weak))
 bool mcBatteryPresent() {
@@ -88,8 +92,18 @@ bool mcWifiConnected() {
 __attribute__((weak))
 void mcUiTick() {}
 
+// ===== КНОПКА: ЖЕЛЕЗО =====
+// «Кнопки на этой плате нет» — правильный ответ по умолчанию: ядро тогда не разбирает фронты
+// и не читает уровень несуществующего пина.
 __attribute__((weak))
-void mcButtonTick() {}
+bool mcButtonAttach() {
+    return false;
+}
+
+__attribute__((weak))
+bool mcButtonDown() {
+    return false;
+}
 
 __attribute__((weak))
 void mcCompanionTick() {}
