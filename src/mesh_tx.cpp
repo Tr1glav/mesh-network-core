@@ -166,13 +166,34 @@ static struct {
     unsigned long dueMs;        // 0 — слот свободен
     int chIdx;
     int len;
+    bool firstCopy;             // эта копия ещё НИ РАЗУ не уходила в эфир
     uint8_t frame[256];
 } floodQ[FLOOD_TX_QUEUE_MAX];
 
 static uint32_t floodQueueDrops = 0;
+static uint32_t floodUnsentDrops = 0;
 
+// Сброс очереди при уходе на быстрый канал. Копии-повторы терять не страшно: сообщение уже
+// ушло хотя бы раз. А вот копия, которая ещё ни разу не выходила в эфир (так бывает только у
+// floodSendQueued, где в очередь кладётся и первая), — это сообщение, потерянное ЦЕЛИКОМ, и
+// приложение при этом считает его отправленным.
+//
+// Отправить её здесь нельзя: мы в начале переключения на FSK, а кадр занимает эфир до двух
+// секунд — это съело бы бюджет рукопожатия (OTA_FAST_SETTLE_MS). Поэтому она всё-таки
+// теряется, но НЕ молча: счётчик и строка в журнале. Молчаливая потеря — это ровно то, что
+// потом ищут неделю.
 void meshTxDropQueued() {
-    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) floodQ[i].dueMs = 0;
+    uint32_t unsent = 0;
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
+        if (floodQ[i].dueMs != 0 && floodQ[i].firstCopy) unsent++;
+        floodQ[i].dueMs = 0;
+    }
+    if (unsent) {
+        floodUnsentDrops += unsent;
+        Serial.printf("[TX] уход на быстрый канал: потеряно %lu ни разу не отправленных "
+                      "сообщений (всего %lu)\n",
+                      (unsigned long)unsent, (unsigned long)floodUnsentDrops);
+    }
 }
 
 // Одна копия за проход, самая просроченная. По одной — потому что каждая отправка ждёт
@@ -197,12 +218,14 @@ void meshTxTick() {
     else         txFrame(floodQ[best].frame, floodQ[best].len);
 }
 
-static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long dueMs) {
+static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long dueMs,
+                           bool firstCopy) {
     for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
         if (floodQ[i].dueMs != 0) continue;
         floodQ[i].dueMs = dueMs ? dueMs : 1;   // 0 занято признаком «свободен»
         floodQ[i].chIdx = chIdx;
         floodQ[i].len = f;
+        floodQ[i].firstCopy = firstCopy;
         memcpy(floodQ[i].frame, frame, f);
         return true;
     }
@@ -229,7 +252,7 @@ static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int g
         // Первая копия уходит здесь же: обычная отправка не должна ждать тика.
         if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
         else            txFrame((uint8_t*)frame, f);
-    } else if (!floodQueueCopy(chIdx, frame, f, firstDue)) {
+    } else if (!floodQueueCopy(chIdx, frame, f, firstDue, true)) {
         // Очередь занята — отправляем сразу, иначе сообщение потеряется совсем.
         if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
         else            txFrame((uint8_t*)frame, f);
@@ -242,7 +265,7 @@ static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int g
     unsigned long due = firstDue;
     for (int i = 1; i < repeats; i++) {
         due += floodGapMs(gapBaseMs);
-        if (floodQueueCopy(chIdx, frame, f, due)) continue;
+        if (floodQueueCopy(chIdx, frame, f, due, false)) continue;
         // Очередь занята. Доставка важнее отзывчивости: досылаем остаток по-старому, с
         // блокирующей паузой, и считаем это — если такое случается часто, слотов мало.
         floodQueueDrops++;
