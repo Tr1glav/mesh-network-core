@@ -37,7 +37,7 @@ void sendAdvert(uint8_t route_type) {
 
     uint8_t frame[190];
     int f = 0;
-    frame[f++] = (uint8_t)((0x04 << 2) | (route_type & 0x03));  // ADVERT | route
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ADVERT << 2) | (route_type & 0x03));  // ADVERT | route
     frame[f++] = PATH_LEN_INIT;  // path_len: размер хэша и 0 хопов
 
     memcpy(frame + f, bot_pub, 32); f += 32;
