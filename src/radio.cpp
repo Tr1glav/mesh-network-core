@@ -1,6 +1,7 @@
 #include "config.h"
 #include "globals.h"
 #include "crypto.h"   // fmtFix: печать чисел без float-printf
+#include "mesh.h"     // meshTxDropQueued: копии флуда не должны уехать после FSK
 #include "radio.h"
 #include "ota.h"      // slog: сверка бюджета должна быть видна без USB
 
@@ -208,6 +209,9 @@ void radioSetNormalConfig() {
 }
 
 void radioSetFastConfig() {
+    // Неотправленные копии флуда отбрасываем: дальше другая модуляция, и копия, уехавшая
+    // после переключения, уйдёт в эфир мусором на чужом канале.
+    meshTxDropQueued();
     fastRxFrames = 0;
     fastRxErrors = 0;
     int st = radio.beginFSK(OTA_FAST_FREQ, OTA_FSK_BR, OTA_FSK_DEV, OTA_FSK_RXBW,

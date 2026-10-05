@@ -145,6 +145,67 @@ int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
     return txFrame((uint8_t*)frame, f);
 }
 
+// ===== Очередь копий флуда =====
+// Копии шли подряд, с delay() между ними, и это останавливало главный цикл на секунды. На
+// коротком сообщении кнопки счёт такой: окно серии 700 мс + три копии по ~0.5 с в эфире +
+// две паузы по ~1.25 с = около 4.7 с, и всё это время прошивка не обслуживала ни экран, ни
+// консоль настроек, ни сторожа сессий. Снаружи это выглядит зависанием.
+//
+// Приём тот же, что уже применён к ответу на «cfg get» и к очереди ретранслятора: первая
+// копия уходит сразу (сообщение не задерживается), остальные ждут своего срока и уходят из
+// meshTxTick() по одной за проход. Срок у каждой свой, с теми же паузами, что были раньше,
+// поэтому в эфире ничего не меняется — меняется только то, что цикл при этом жив.
+#ifndef FLOOD_TX_QUEUE_MAX
+#define FLOOD_TX_QUEUE_MAX 4
+#endif
+
+static struct {
+    unsigned long dueMs;        // 0 — слот свободен
+    int chIdx;
+    int len;
+    uint8_t frame[256];
+} floodQ[FLOOD_TX_QUEUE_MAX];
+
+static uint32_t floodQueueDrops = 0;
+
+void meshTxDropQueued() {
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) floodQ[i].dueMs = 0;
+}
+
+// Одна копия за проход, самая просроченная. По одной — потому что каждая отправка ждёт
+// тишины в канале и держит кадр в эфире: отдать всю очередь за раз значило бы вернуть ту же
+// остановку цикла, от которой очередь и заведена (так же устроен meshRelayTick).
+void meshTxTick() {
+    // На быстром канале копии не нужны и вредны: там FSK и другой кадр.
+    if (otaFastMode) { meshTxDropQueued(); return; }
+    const unsigned long now = millis();
+    int best = -1;
+    long bestLate = -1;
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
+        if (floodQ[i].dueMs == 0) continue;
+        const long late = (long)(now - floodQ[i].dueMs);
+        if (late < 0) continue;
+        if (late > bestLate) { bestLate = late; best = i; }
+    }
+    if (best < 0) return;
+    const int ch = floodQ[best].chIdx;
+    floodQ[best].dueMs = 0;
+    if (ch >= 0) sendFrame(ch, floodQ[best].frame, floodQ[best].len, false);
+    else         txFrame(floodQ[best].frame, floodQ[best].len);
+}
+
+static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long dueMs) {
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
+        if (floodQ[i].dueMs != 0) continue;
+        floodQ[i].dueMs = dueMs ? dueMs : 1;   // 0 занято признаком «свободен»
+        floodQ[i].chIdx = chIdx;
+        floodQ[i].len = f;
+        memcpy(floodQ[i].frame, frame, f);
+        return true;
+    }
+    return false;
+}
+
 void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
     // База паузы по умолчанию — время ЭТОГО кадра в эфире, а не общая константа. Так же
@@ -157,14 +218,26 @@ void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, i
     // Ноль по-прежнему означает «решай сам»; floodGapMs зажмёт базу в [FLOOD_RETRY_MIN_MS,
     // FLOOD_RETRY_MAX_MS] и добавит разброс.
     if (gapBaseMs == 0) gapBaseMs = radioAirtimeMs(f);
-    for (int i = 0; i < repeats; i++) {
-        if (chIdx >= 0) sendFrame(chIdx, frame, f, i == 0);
+    // Первая копия уходит здесь же: сообщение не должно ждать тика.
+    if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
+    else            txFrame((uint8_t*)frame, f);
+
+    // Остальные — в очередь, каждая со своим сроком. Пауза перед следующей копией набирается
+    // заново для каждой: одинаковые паузы снова собрали бы копии в один залп, и одна помеха
+    // убила бы их все. Разброс поверх gapBaseMs нужен ещё и затем, чтобы два узла, начавшие
+    // передачу вместе, не повторяли копии синхронно.
+    unsigned long due = millis();
+    for (int i = 1; i < repeats; i++) {
+        due += floodGapMs(gapBaseMs);
+        if (floodQueueCopy(chIdx, frame, f, due)) continue;
+        // Очередь занята. Доставка важнее отзывчивости: досылаем остаток по-старому, с
+        // блокирующей паузой, и считаем это — если такое случается часто, слотов мало.
+        floodQueueDrops++;
+        Serial.printf("[TX] очередь копий занята — досылаю %d-ю блокирующе (всего %lu)\n",
+                      i + 1, (unsigned long)floodQueueDrops);
+        delay(floodGapMs(gapBaseMs));
+        if (chIdx >= 0) sendFrame(chIdx, frame, f, false);
         else            txFrame((uint8_t*)frame, f);
-        // Пауза перед следующей копией набирается заново для каждой: одинаковые паузы снова
-        // собрали бы копии в один залп, и одна помеха убила бы их все. Разброс поверх
-        // gapBaseMs нужен ещё и для того, чтобы два узла, начавшие передачу вместе, не повторяли
-        // копии синхронно.
-        if (i < repeats - 1) delay(floodGapMs(gapBaseMs));
     }
 }
 
