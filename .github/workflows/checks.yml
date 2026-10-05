@@ -44,3 +44,88 @@ jobs:
       - name: Проверки ядра
         working-directory: mesh-network-tools
         run: python3 selftest.py --target core
+
+  # Вторая половина конвейера: ядро обязано собирать СВОИХ ПОТРЕБИТЕЛЕЙ. Проверки выше смотрят
+  # на ядро в одиночку, а ломается оно у прошивок: 1 октября 2026 расписание задач узла уехало
+  # в ядро, прошивки удалили свои копии — и T-Deck собрался локально (там ядро подключено
+  # symlink'ом на рабочее дерево), но упал в своём CI, потому что тот берёт ядро по core.ref.
+  #
+  # Здесь прошивки собираются против ЭТОГО коммита ядра, а не против своего пина: так видно,
+  # что выпуск ядра не сломает потребителя, ещё до того, как поставлен тег.
+  consumers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # интересны обе прошивки, а не первая упавшая
+      matrix:
+        include:
+          - repo: meshcore-fork
+            branch: develop
+          - repo: tdeck
+            branch: prod
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mesh-network-core
+
+      # Публичный meshcore-fork выкачивается без токена, приватный tdeck — только с ним.
+      # Секрета может не быть (его кладёт владелец), и тогда ветку матрицы надо ПРОПУСТИТЬ с
+      # внятной записью в журнал, а не уронить: иначе красный CI ядра означал бы не поломку
+      # ядра, а отсутствие доступа, и на него перестали бы смотреть.
+      - name: Доступ к потребителю
+        id: gate
+        env:
+          TOKEN: ${{ secrets.CONSUMERS_TOKEN }}
+        run: |
+          if [ "${{ matrix.repo }}" != "tdeck" ] || [ -n "$TOKEN" ]; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::tdeck приватный, секрета CONSUMERS_TOKEN нет — сборка этого потребителя пропущена"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ok == '1'
+        with:
+          repository: Tr1glav/${{ matrix.repo }}
+          ref: ${{ matrix.branch }}
+          path: ${{ matrix.repo }}
+          token: ${{ secrets.CONSUMERS_TOKEN || github.token }}
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ok == '1'
+        with:
+          repository: Tr1glav/mesh-network-tools
+          ref: prod
+          path: mesh-network-tools
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.ok == '1'
+        with:
+          python-version: '3.12'
+
+      - name: Кеш PlatformIO
+        if: steps.gate.outputs.ok == '1'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ${{ matrix.repo }}/.pio
+          key: pio-${{ matrix.repo }}-${{ hashFiles(format('{0}/platformio.ini', matrix.repo)) }}
+
+      - name: Установка PlatformIO
+        if: steps.gate.outputs.ok == '1'
+        run: pip install --upgrade platformio
+
+      # core.ref прошивки здесь намеренно НЕ соблюдается: смысл задания в том, чтобы собрать её
+      # с ядром из этого коммита. Пин остаётся в её собственном CI.
+      - name: Проверки прошивки
+        if: steps.gate.outputs.ok == '1'
+        working-directory: mesh-network-tools
+        run: python3 selftest.py --target ${{ matrix.repo == 'tdeck' && 'tdeck' || 'fork' }}
+
+      - name: Сборка прошивки с этим ядром
+        if: steps.gate.outputs.ok == '1'
+        working-directory: ${{ matrix.repo }}
+        env:
+          NOGIT: '1'          # обязателен: пост-действие сборки иначе коммитит и отправляет
+        run: pio run
