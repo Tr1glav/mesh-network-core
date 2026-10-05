@@ -2,6 +2,7 @@
 #include "globals.h"
 #include "crypto.h"   // fmtFix: печать чисел без float-printf
 #include "radio.h"
+#include "ota.h"      // slog: сверка бюджета должна быть видна без USB
 
 void rearmRadioAGC() {
     radio.sleep();
@@ -141,16 +142,28 @@ bool initLoRa() {
         // бюджет ожидания короче, чем нужно, — ответы начинают засчитываться потерями
         // без единой ошибки в коде. Молчать об этом нельзя, а падать не за что: сеть
         // работает, просто пороги подобраны не под эти настройки.
+        // Через slog, а не только в Serial: USB к узлу не подключён почти никогда, а
+        // настройки радио меняются по сети — со страницы координатора. Предупреждение,
+        // видное лишь по кабелю, для работающего узла не существует.
+        //
+        // Признак здесь — FEATURE_MESH_OTA_SENDER, и это не опечатка: сам slog объявлен в
+        // ota.h, но ОПРЕДЕЛЁН внутри `#if FEATURE_MESH_OTA_SENDER` в ota.cpp, то есть у
+        // сенсора его нет вовсе (линковка падает на undefined reference — так и выяснилось).
+        // Журнал страницы к раздаче прошивки отношения не имеет, и держать его за этим
+        // признаком странно, но разбирать это здесь не место: у кого страницы нет, тому и
+        // журнал читать негде, остаётся Serial.
         const uint32_t airWorst = radioAirtimeMs(255);
-        if (airWorst > FRAME_AIRTIME_MS) {
-            Serial.printf("[RADIO] ВНИМАНИЕ: кадр 255 Б висит в эфире %lu мс, а бюджет "
-                          "сборки FRAME_AIRTIME_MS = %d мс. Все таймауты, выведенные из "
-                          "него, короче нужного: верните SF%u/BW или пересоберите ядро\n",
-                          (unsigned long)airWorst, (int)FRAME_AIRTIME_MS, cfg.loraSf);
-        } else {
-            Serial.printf("[RADIO] кадр 255 Б в эфире %lu мс, бюджет %d мс\n",
-                          (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
-        }
+        const char* fmtWarn = "[RADIO] ВНИМАНИЕ: кадр 255 Б висит в эфире %lu мс, а бюджет "
+                              "сборки FRAME_AIRTIME_MS = %d мс. Все выведенные из него "
+                              "таймауты короче нужного: верните прежний SF/полосу или "
+                              "пересоберите ядро\n";
+        const char* fmtOk = "[RADIO] кадр 255 Б в эфире %lu мс, бюджет %d мс\n";
+        const char* fmt = (airWorst > FRAME_AIRTIME_MS) ? fmtWarn : fmtOk;
+        #if FEATURE_MESH_OTA_SENDER
+        slog(fmt, (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
+        #else
+        Serial.printf(fmt, (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
+        #endif
         return true;
     }
     
