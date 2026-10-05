@@ -63,6 +63,11 @@ void meshTxDropQueued();
 // накрывает одну копию, а не все сразу; см. FLOOD_RETRY_* в config.h.
 void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs = 0,
                int repeats = FLOOD_REPEATS);
+// То же, но БЕЗ выхода в эфир из вызывающего кода: все копии, включая первую, уходят из
+// meshTxTick(). Для тех, кто обязан ответить сразу, — например обработчика команды
+// приложения-компаньона: иначе подтверждение опаздывает на ожидание канала и время кадра.
+void floodSendQueued(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs = 0,
+                     int repeats = FLOOD_REPEATS);
 void sensorSendMsg(const char* msg, unsigned int gapBaseMs = 0, int repeats = FLOOD_REPEATS);
 // Сообщение, которое может дословно повториться, — с номером отправки. Без него два
 // одинаковых повтора в одну секунду дают одинаковый шифротекст, а значит и одинаковый хэш:

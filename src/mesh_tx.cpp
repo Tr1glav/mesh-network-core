@@ -155,8 +155,11 @@ int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
 // копия уходит сразу (сообщение не задерживается), остальные ждут своего срока и уходят из
 // meshTxTick() по одной за проход. Срок у каждой свой, с теми же паузами, что были раньше,
 // поэтому в эфире ничего не меняется — меняется только то, что цикл при этом жив.
+// Слотов восемь, а не четыре: при отправке из приложения в очередь уходят ВСЕ копии
+// сообщения (см. floodSendQueued), то есть одно сообщение занимает три слота, и двух
+// сообщений подряд уже хватало бы на переполнение.
 #ifndef FLOOD_TX_QUEUE_MAX
-#define FLOOD_TX_QUEUE_MAX 4
+#define FLOOD_TX_QUEUE_MAX 8
 #endif
 
 static struct {
@@ -206,7 +209,10 @@ static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long
     return false;
 }
 
-void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
+// Общая часть обеих отправок. inlineFirst решает, уходит первая копия прямо здесь или тоже
+// ждёт тика: разница в том, блокирует ли вызывающий код главный цикл на время передачи.
+static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs,
+                          int repeats, bool inlineFirst) {
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
     // База паузы по умолчанию — время ЭТОГО кадра в эфире, а не общая константа. Так же
     // устроено у оригинального MeshCore: там задержка повтора выводится из
@@ -218,15 +224,22 @@ void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, i
     // Ноль по-прежнему означает «решай сам»; floodGapMs зажмёт базу в [FLOOD_RETRY_MIN_MS,
     // FLOOD_RETRY_MAX_MS] и добавит разброс.
     if (gapBaseMs == 0) gapBaseMs = radioAirtimeMs(f);
-    // Первая копия уходит здесь же: сообщение не должно ждать тика.
-    if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
-    else            txFrame((uint8_t*)frame, f);
+    unsigned long firstDue = millis();
+    if (inlineFirst) {
+        // Первая копия уходит здесь же: обычная отправка не должна ждать тика.
+        if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
+        else            txFrame((uint8_t*)frame, f);
+    } else if (!floodQueueCopy(chIdx, frame, f, firstDue)) {
+        // Очередь занята — отправляем сразу, иначе сообщение потеряется совсем.
+        if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
+        else            txFrame((uint8_t*)frame, f);
+    }
 
     // Остальные — в очередь, каждая со своим сроком. Пауза перед следующей копией набирается
     // заново для каждой: одинаковые паузы снова собрали бы копии в один залп, и одна помеха
     // убила бы их все. Разброс поверх gapBaseMs нужен ещё и затем, чтобы два узла, начавшие
     // передачу вместе, не повторяли копии синхронно.
-    unsigned long due = millis();
+    unsigned long due = firstDue;
     for (int i = 1; i < repeats; i++) {
         due += floodGapMs(gapBaseMs);
         if (floodQueueCopy(chIdx, frame, f, due)) continue;
@@ -402,4 +415,24 @@ String channelListStr() {
         s += channels[i].name;
     }
     return s;
+}
+
+void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
+    floodSendImpl(chIdx, frame, f, gapBaseMs, repeats, true);
+}
+
+// Отправка, которая НЕ выходит в эфир из вызывающего кода: в очередь уходят все копии,
+// включая первую, и функция возвращается сразу.
+//
+// Нужна там, где вызывающий обязан ответить, а не ждать: приложение-компаньон после команды
+// «отправить сообщение» ждёт подтверждения по BLE, и если мы сначала передаём кадр, а потом
+// отвечаем, подтверждение опаздывает на ожидание тишины в канале плюс время кадра в эфире —
+// до двух секунд. Снаружи это и есть «приложение притормаживает». У оригинала такого нет
+// потому, что там передача асинхронная целиком: пакет кладётся в очередь, ответ уходит
+// немедленно, а эфиром занимается диспетчер.
+//
+// Первая копия уйдёт с ближайшего meshTxTick(), то есть через один проход цикла.
+void floodSendQueued(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs,
+                     int repeats) {
+    floodSendImpl(chIdx, frame, f, gapBaseMs, repeats, false);
 }
