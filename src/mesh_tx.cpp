@@ -147,6 +147,16 @@ int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
 
 void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
     markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
+    // База паузы по умолчанию — время ЭТОГО кадра в эфире, а не общая константа. Так же
+    // устроено у оригинального MeshCore: там задержка повтора выводится из
+    // getEstAirtimeFor() пакета. Причина простая: на наших настройках кадр 16 Б висит в
+    // эфире 259 мс, а 255 Б — 1979 мс, и держать для обоих одну паузу значит либо наложить
+    // копии большого кадра друг на друга, либо впустую тормозить короткие сообщения
+    // (а короткие — это почти весь обмен: heartbeat, пинги, команды).
+    //
+    // Ноль по-прежнему означает «решай сам»; floodGapMs зажмёт базу в [FLOOD_RETRY_MIN_MS,
+    // FLOOD_RETRY_MAX_MS] и добавит разброс.
+    if (gapBaseMs == 0) gapBaseMs = radioAirtimeMs(f);
     for (int i = 0; i < repeats; i++) {
         if (chIdx >= 0) sendFrame(chIdx, frame, f, i == 0);
         else            txFrame((uint8_t*)frame, f);

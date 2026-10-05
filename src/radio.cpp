@@ -20,6 +20,23 @@ void rearmRadioAGC() {
 //
 // В быстром режиме OTA проверка пропускается: там FSK, а CAD — это про LoRa; к тому же
 // быстрый канал отдельный, и на нём кроме нас никого нет.
+// Время кадра в эфире по текущим настройкам радио. RadioLib считает это по выставленным
+// SF/BW/CR/преамбуле и отдаёт микросекунды.
+//
+// Округление ВВЕРХ и только вверх: число идёт в паузы и бюджеты ожидания, и ошибка вниз
+// означает передачу поверх собственной предыдущей копии. В быстром режиме (FSK) спрашивать
+// бессмысленно — там другая модуляция и отдельный канал, на котором кроме нас никого нет;
+// возвращаем бюджет сборки, чтобы вызывающий не получил ноль.
+uint32_t radioAirtimeMs(int len) {
+    if (otaFastMode) return FRAME_AIRTIME_MS;
+    if (len <= 0) len = 1;
+    if (len > 255) len = 255;
+    const uint32_t us = radio.getTimeOnAir((size_t)len);
+    if (us == 0) return FRAME_AIRTIME_MS;      // радио не настроено — не врём нулём
+    const uint32_t ms = (us + 999) / 1000;
+    return ms ? ms : 1;
+}
+
 static bool waitChannelFree() {
     if (otaFastMode) return true;
     const unsigned long startedMs = millis();
@@ -117,6 +134,23 @@ bool initLoRa() {
         Serial.println("LoRa OK (TCXO from macro)");
         radio.setCRC(true);
         applyBoardRadioOptions();
+        // Сверка бюджета с действительностью. Все таймауты протокола выведены из
+        // FRAME_AIRTIME_MS — времени, которое САМЫЙ БОЛЬШОЙ кадр занимает эфир. Это
+        // константа сборки, а SF и полоса лежат в NVS и меняются из консоли: узел,
+        // переведённый на SF11, висит в эфире в несколько раз дольше, и тогда каждый
+        // бюджет ожидания короче, чем нужно, — ответы начинают засчитываться потерями
+        // без единой ошибки в коде. Молчать об этом нельзя, а падать не за что: сеть
+        // работает, просто пороги подобраны не под эти настройки.
+        const uint32_t airWorst = radioAirtimeMs(255);
+        if (airWorst > FRAME_AIRTIME_MS) {
+            Serial.printf("[RADIO] ВНИМАНИЕ: кадр 255 Б висит в эфире %lu мс, а бюджет "
+                          "сборки FRAME_AIRTIME_MS = %d мс. Все таймауты, выведенные из "
+                          "него, короче нужного: верните SF%u/BW или пересоберите ядро\n",
+                          (unsigned long)airWorst, (int)FRAME_AIRTIME_MS, cfg.loraSf);
+        } else {
+            Serial.printf("[RADIO] кадр 255 Б в эфире %lu мс, бюджет %d мс\n",
+                          (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
+        }
         return true;
     }
     

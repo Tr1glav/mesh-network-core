@@ -57,6 +57,16 @@ static void otaSensorAckstart() {
     uint8_t frame[256];
     int f = buildGroupFrameFlood(sensorChannelIdx, OTA_ACKSTART, frame, sizeof(frame));
     if (f <= 0) return;
+    // Бюджет рукопожатия посчитан для кадра не длиннее OTA_ACKSTART_FRAME_MAX: бот ждёт
+    // OTA_FAST_SETTLE_MS и начинает слать пачку, а сенсор к этому моменту обязан успеть
+    // договорить обе копии и переключить радио. Длина кадра зависит от имени узла, и с
+    // длинным именем бюджет перестаёт сходиться. Отправку не отменяем — сессия нужна, — но
+    // молчать нельзя: иначе сорванное рукопожатие выглядит как потеря в эфире.
+    if (f > OTA_ACKSTART_FRAME_MAX) {
+        Serial.printf("[OTA] ackstart %d Б > бюджета %d Б: имя узла длинное, бот может начать "
+                      "пачку раньше, чем сенсор уйдёт на быстрый канал\n",
+                      f, (int)OTA_ACKSTART_FRAME_MAX);
+    }
     for (int i = 0; i < OTA_ACKSTART_COPIES; i++) {
         if (i) delay(OTA_ACKSTART_GAP_MS);
         sendFrame(sensorChannelIdx, frame, f, i == 0);
