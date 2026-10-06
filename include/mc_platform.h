@@ -154,7 +154,7 @@ bool publishSensorMessage();
 // #ifdef COMPANION_NODE.
 #ifdef COMPANION_NODE
 void companionOnChannelText(int channelIdx, const String& text, float snr, uint8_t pathLen,
-                            bool notify = true);
+                            uint32_t senderTs, bool notify = true);
 // Личное сообщение приложению отдаётся НЕ как сообщение канала: в оригинале у него свой код
 // кадра и свой адресат — контакт, а не канал. Пока личка приезжала каналом, приложение
 // показывало её в общей переписке и не знало, от кого она, а значит не могло показать ни

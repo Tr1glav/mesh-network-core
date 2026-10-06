@@ -186,6 +186,18 @@ void meshReplyTick() {
 }
 #endif  // !SENSOR_NODE
 
+// Метка времени из кадра — по часам ОТПРАВИТЕЛЯ, и они бывают не выставлены вовсе: узел без
+// синхронизации кладёт в кадр не Unix-время, а millis(), то есть «1970 год плюс пара дней».
+// Приложение показывает эту метку как время сообщения и по ней же ищет кадр в сыром журнале
+// 0x88. Неправдоподобную метку поэтому заменяем своим временем приёма: показать «вчера
+// в 03:00» честнее, чем 1970 год, а найти такой кадр в журнале всё равно нельзя — его хэш
+// отправитель считал по своей неправильной метке. Порог тот же, что у сборщика кадра.
+static uint32_t senderTsOrOurs(uint32_t senderTs) {
+    if (senderTs > 1000000000) return senderTs;      // похоже на настоящее Unix-время
+    const uint32_t now = (uint32_t)time(NULL);
+    return (now > 1000000000) ? now : senderTs;      // наши часы тоже не выставлены — как есть
+}
+
 bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     if (len < 6) return false;
 
@@ -305,6 +317,10 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     bool personalDm = false;
     uint8_t dmSrc = 0;
     int chIdx = -1;
+    // Метка времени ОТПРАВИТЕЛЯ канального сообщения (из открытого текста кадра). Приложение
+    // сопоставляет сообщение из очереди с сырым журналом 0x88 именно по этой метке, поэтому
+    // ей здесь и место — на уровне функции, рядом с остальным, что отдаётся приложению.
+    uint32_t chSenderTs = 0;
 
     if (payload_type == PAYLOAD_TYPE_TXT_MSG || payload_type == PAYLOAD_TYPE_PATH) {
         // Личное сообщение: payload = [dest_hash 1B][src_hash 1B][MAC 2B][cipher...].
@@ -425,7 +441,7 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 // кадре нет, и показывать в приложении нечего.
                 companionOnDirectText(dmPeerPub, text, meta.snr,
                                       route_type == ROUTE_TYPE_FLOOD ? path_len : 0xFF,
-                                      dmSenderTs, dmTxtType);
+                                      senderTsOrOurs(dmSenderTs), dmTxtType);
                 #endif
             }
         }
@@ -449,7 +465,22 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         // обрезаем до кратного 16
         int ciphertext_len_trunc = ciphertext_len & ~15;
         if (ciphertext_len_trunc <= 0) return false;
-        String message = decryptGroupText(channels[chIdx].secret, mac, ciphertext, ciphertext_len_trunc);
+        // Расшифровываем В БУФЕР, а не сразу в строку: приложению нужна МЕТКА ВРЕМЕНИ
+        // ОТПРАВИТЕЛЯ из первых четырёх байт открытого текста, а decryptGroupText их
+        // выбрасывает вместе с байтом типа. По этой метке приложение сопоставляет
+        // сообщение из очереди с сырым журналом 0x88 (кадр оттуда он расшифровывает сам) —
+        // отсюда и маршрут. Со временем ПРИЁМА совпадение держалось только на часах,
+        // идущих секунда в секунду: у своих узлов хопы показывались, у чужих нет.
+        //
+        // Раскладка та же, что у лички: [время 4][тип 1][текст][0].
+        uint8_t chPlain[GROUP_TEXT_MAX];
+        const int chPlainLen = decryptGroupRaw(channels[chIdx].secret, mac, ciphertext,
+                                               ciphertext_len_trunc, chPlain, sizeof(chPlain));
+        String message = "";
+        if (chPlainLen > 5) {
+            memcpy(&chSenderTs, chPlain, 4);
+            for (int i = 5; i < chPlainLen && chPlain[i]; i++) message += (char)chPlain[i];
+        }
 
         if (message.length() == 0) {
             Serial.println("[!] HMAC не совпал или пустое сообщение");
@@ -495,7 +526,8 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         // размер хэша ретранслятора, и счётчик, по нему приложение и показывает маршрут.
         // Для пакетов, пришедших не флудом (direct), как в оригинале шлём маркер 0xFF.
         uint8_t appPathLen = (route_type == 0x00 || route_type == 0x01) ? path_len : 0xFF;
-        companionOnChannelText(chIdx, forApp, lastSNR, appPathLen);
+        companionOnChannelText(chIdx, forApp, lastSNR, appPathLen,
+                               senderTsOrOurs(chSenderTs));
     }
     #endif
 

@@ -71,13 +71,22 @@ void sendAdvert(uint8_t route_type) {
     }
 }
 
-int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc) {
+int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc, uint32_t* outTs,
+                  uint32_t msgTs) {
     if (chIdx < 0 || chIdx >= numChannels) return 0;
     uint8_t plaintext[GROUP_TEXT_MAX_PLAIN];
     // ts — Unix-время в СЕКУНДАХ (как у adverts и личных сообщений): epoch-ms не
     // помещается в uint32. Пока часы не выставлены — millis.
+    //
+    // Метка ПРИЛОЖЕНИЯ, если она есть (msgTs != 0), важнее часов узла: приложение ищет
+    // своё же отправленное сообщение в сыром журнале 0x88 по той метке, которую прислало
+    // в команде, и по ней же показывает маршрут. Соберём кадр с часами узла — метки
+    // разойдутся, и у СВОИХ исходящих сообщений маршрут не покажется. Та же причина, по
+    // которой метку приложения принимает сборщик лички.
     uint32_t now = (uint32_t)time(NULL);
-    uint32_t ts = (now > 1000000000) ? now : (uint32_t)millis();
+    uint32_t ts = (msgTs != 0) ? msgTs
+                               : ((now > 1000000000) ? now : (uint32_t)millis());
+    if (outTs) *outTs = ts;
     memcpy(plaintext, &ts, 4);                      // timestamp (LE)
     plaintext[4] = 0;                               // TXT_TYPE_PLAIN
     size_t plen = 5;
@@ -94,9 +103,10 @@ int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc) {
     return encryptGroupText(channels[chIdx].secret, enc, plaintext, plen);
 }
 
-int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen) {
+int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen,
+                         uint32_t* outTs, uint32_t msgTs) {
     uint8_t enc[GROUP_TEXT_MAX_PLAIN + 2];
-    int enclen = buildGroupEnc(chIdx, msg, enc);
+    int enclen = buildGroupEnc(chIdx, msg, enc, outTs, msgTs);
     if (enclen <= 0 || 3 + enclen > maxlen) return 0;
     frame[0] = 0x15;                    // GRP_TXT | ROUTE_TYPE_FLOOD
     frame[1] = PATH_LEN_INIT;           // размер хэша, 0 хопов (путь достроят ретрансляторы)
@@ -107,15 +117,19 @@ int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxle
 
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           const String& msg, uint8_t* frame, int maxlen,
-                          uint8_t* expectedAck4) {
+                          uint8_t* expectedAck4, uint32_t msgTs, uint8_t attempt) {
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
 
     uint8_t data[DM_TEXT_MAX + 8];
     int dlen = 0;
-    uint32_t ts = (uint32_t)time(NULL);   // Unix-секунды (epoch-ms не лезет в uint32)
+    // Метка времени и номер попытки — ИЗ КОМАНДЫ ПРИЛОЖЕНИЯ, когда они есть: по ним
+    // приложение показывает сообщение в переписке и отличает повтор от нового, а получатель
+    // считает по ним хэш подтверждения. Узел (ответ на чужую личку) своей метки не несёт —
+    // для него msgTs == 0, и берём часы узла, как раньше.
+    uint32_t ts = (msgTs != 0) ? msgTs : (uint32_t)time(NULL);   // Unix-секунды
     memcpy(data, &ts, 4); dlen += 4;
-    data[dlen++] = 0;                        // attempt = 0
+    data[dlen++] = (uint8_t)(attempt & 3);                       // номер попытки, 2 бита
     size_t ml = min((size_t)DM_TEXT_MAX, (size_t)msg.length());
     memcpy(data + dlen, msg.c_str(), ml); dlen += ml;
     data[dlen++] = 0;                        // null terminator
@@ -333,15 +347,18 @@ void sensorSendMsg(const char* msg, unsigned int gapBaseMs, int repeats) {
         return;
     }
     uint8_t frame[256];
-    int f = buildGroupFrameFlood(sensorChannelIdx, msg, frame, sizeof(frame));
+    uint32_t senderTs = 0;
+    int f = buildGroupFrameFlood(sensorChannelIdx, msg, frame, sizeof(frame), &senderTs);
     if (f <= 0) return;
     floodSend(-1, frame, f, gapBaseMs, repeats);
     Serial.printf("[SNS] sent \"%s\" to sensor channel\n", msg);
     #ifdef COMPANION_NODE
     // Собственные передачи в приложение иначе не попадают: в очередь кладётся только
     // принятое из эфира, а свой же флуд отбрасывается как эхо. Кладём прямо здесь, с тем
-    // же префиксом имени, с каким сообщение ушло в эфир.
-    companionOnChannelText(sensorChannelIdx, cfg.name + ": " + msg, 0.0f, PATH_LEN_INIT, false);
+    // же префиксом имени и той же МЕТКОЙ ОТПРАВИТЕЛЯ, с какими сообщение ушло в эфир:
+    // приложение сопоставляет очередь с сырым журналом 0x88 именно по этой метке.
+    companionOnChannelText(sensorChannelIdx, cfg.name + ": " + msg, 0.0f, PATH_LEN_INIT,
+                           senderTs, false);
     #endif
     #ifdef SENSOR_NODE
     sensorLastSent = msg;

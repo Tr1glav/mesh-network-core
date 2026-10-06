@@ -28,15 +28,27 @@ void loadSensorChannel();
 void loadTxChannel();
 #endif
 void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_count, uint8_t path_hash_size);
-int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc);
-int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen);
+// outTs — куда вернуть метку, которая легла в кадр: с ней же эхо собственного сообщения
+// кладётся в очередь приложения, иначе приложение не найдёт его в сыром журнале 0x88.
+// msgTs — метка ИЗ КОМАНДЫ приложения; 0 означает «по часам узла» (сообщения самого узла).
+int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc, uint32_t* outTs = NULL,
+                  uint32_t msgTs = 0);
+int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen,
+                         uint32_t* outTs = NULL, uint32_t msgTs = 0);
 // expectedAck4 — куда положить хэш подтверждения, которое ПРИДЁТ на это сообщение. Считается
 // здесь, а не у вызывающего, потому что считается по тому же открытому тексту, который
 // собирается внутри: вынеси расчёт наружу — и он разойдётся с кадром при первой правке
 // раскладки. Получатель считает тот же хэш по нашему публичному ключу (см. dmAckSend).
+// msgTs/attempt — метка времени и номер попытки из КОМАНДЫ приложения: они входят в
+// открытый текст (и потому в хэш подтверждения), а приложение показывает сообщение по своей
+// метке и отличает повторы по номеру попытки. Раньше кадр собирался с time(NULL)/0, и
+// подтверждение, которое прилетит на этот кадр, не совпадало ни с чем, что знает приложение.
+// msgTs == 0 означает «по часам узла» — для ответов самого узла (mesh_rx.cpp), у которых
+// метки приложения нет вовсе.
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           const String& msg, uint8_t* frame, int maxlen,
-                          uint8_t* expectedAck4 = NULL);
+                          uint8_t* expectedAck4 = NULL,
+                          uint32_t msgTs = 0, uint8_t attempt = 0);
 // logHex печатает кадр в журнал. Выключайте, когда кадр уже напечатан: копии флуда
 // побайтово равны, и дамп на каждую копию только тормозит UART, ничего не добавляя.
 // Возврат маршрута отправителю: дорога ДО НАС плюс необязательный довесок (обычно
