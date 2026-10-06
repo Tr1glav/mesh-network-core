@@ -117,7 +117,8 @@ int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxle
 
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           const String& msg, uint8_t* frame, int maxlen,
-                          uint8_t* expectedAck4, uint32_t msgTs, uint8_t attempt) {
+                          uint8_t* expectedAck4, uint32_t msgTs, uint8_t attempt,
+                          uint8_t txtType) {
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
 
@@ -129,7 +130,11 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     // для него msgTs == 0, и берём часы узла, как раньше.
     uint32_t ts = (msgTs != 0) ? msgTs : (uint32_t)time(NULL);   // Unix-секунды
     memcpy(data, &ts, 4); dlen += 4;
-    data[dlen++] = (uint8_t)(attempt & 3);                       // номер попытки, 2 бита
+    // Байт флагов: в старших шести битах тип текста, в младших двух — номер попытки. Тип
+    // обязан уехать в эфир: 1 означает КОМАНДНУЮ СТРОКУ, и именно по нему ретранслятор
+    // понимает, что пришла команда, а не беседа. Пока здесь был прибит ноль, управлять
+    // чужим ретранслятором из приложения было нельзя — он читал команды как текст.
+    data[dlen++] = (uint8_t)(((txtType & 0x3F) << 2) | (attempt & 3));
     size_t ml = min((size_t)DM_TEXT_MAX, (size_t)msg.length());
     memcpy(data + dlen, msg.c_str(), ml); dlen += ml;
     data[dlen++] = 0;                        // null terminator
@@ -151,6 +156,92 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     frame[f++] = ownShortHash;
     memcpy(frame + f, enc, enclen); f += enclen;
     return f;
+}
+
+// ===== ВХОД НА РЕТРАНСЛЯТОР (ANON_REQ) =====
+// Копия Mesh::createAnonDatagram оригинала. Конверт здесь ДРУГОЙ, не как у лички:
+// [адресат 1][НАШ ПУБЛИЧНЫЙ КЛЮЧ 32][MAC 2][шифр]. Полный ключ вместо короткого хэша
+// обязателен — ретранслятор нас ещё не знает, и вывести общий секрет ему больше неоткуда.
+// Поэтому же и «анонимный»: вход всегда первый разговор.
+//
+// Содержимое: [время 4][пароль до 15 знаков]. Время — и метка запроса (ответ придёт с ней
+// же), и то, что делает хэш пакета неповторимым.
+int buildLoginFrame(uint8_t dest_hash, const uint8_t* dest_pub, const char* password,
+                    uint32_t* outTag, uint8_t* frame, int maxlen) {
+    uint8_t data[4 + LOGIN_PASSWORD_MAX];
+    int dlen = 0;
+    const uint32_t now = (uint32_t)time(NULL);
+    const uint32_t tag = (now > 1000000000) ? now : (uint32_t)millis();
+    memcpy(data, &tag, 4); dlen += 4;
+    if (outTag) *outTag = tag;
+    size_t pl = password ? strlen(password) : 0;
+    if (pl > LOGIN_PASSWORD_MAX) pl = LOGIN_PASSWORD_MAX;   // длиннее оригинал не принимает
+    memcpy(data + dlen, password, pl); dlen += (int)pl;
+
+    uint8_t secret[32];
+    ed25519_key_exchange(secret, dest_pub, bot_prv64);
+    uint8_t enc[4 + LOGIN_PASSWORD_MAX + 24];
+    const int enclen = encryptGroupText(secret, enc, data, dlen);
+    if (enclen <= 0 || 2 + 1 + 32 + enclen > maxlen) return 0;
+
+    int f = 0;
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ANON_REQ << 2) | ROUTE_TYPE_FLOOD);
+    frame[f++] = PATH_LEN_INIT;
+    frame[f++] = dest_hash;
+    memcpy(frame + f, bot_pub, 32); f += 32;      // наш ключ целиком, а не короткий хэш
+    memcpy(frame + f, enc, enclen); f += enclen;
+    return f;
+}
+
+// ===== ЗАПРОС К РЕТРАНСЛЯТОРУ (REQ) =====
+// Копия BaseChatMesh::sendRequest. Конверт тот же, что у лички ([адресат][отправитель][MAC]
+// [шифр]) — после входа узел нас уже знает по короткому хэшу. Содержимое:
+// [метка 4][тело запроса].
+//
+// Метка возвращается наружу: ответ придёт с ней в первых четырёх байтах, и сопоставить
+// «кому этот ответ» можно только по ней. Поэтому же она обязана быть уникальной — берём
+// время с подмешанным случайным хвостом, иначе два запроса подряд в одну секунду дадут
+// одинаковую метку, а дедуп сочтёт второй кадр копией первого.
+int buildReqFrame(uint8_t dest_hash, const uint8_t* dest_pub,
+                  const uint8_t* reqData, int reqLen,
+                  uint32_t* outTag, uint8_t* frame, int maxlen) {
+    if (reqLen < 0 || reqLen > 64) return 0;
+    uint8_t data[4 + 64];
+    int dlen = 0;
+    const uint32_t now = (uint32_t)time(NULL);
+    uint32_t tag = (now > 1000000000) ? now : (uint32_t)millis();
+    static uint32_t lastTag = 0;
+    if (tag == lastTag) tag++;                    // две метки в одну секунду не повторяем
+    lastTag = tag;
+    memcpy(data, &tag, 4); dlen += 4;
+    if (outTag) *outTag = tag;
+    memcpy(data + dlen, reqData, reqLen); dlen += reqLen;
+
+    uint8_t secret[32];
+    ed25519_key_exchange(secret, dest_pub, bot_prv64);
+    uint8_t enc[4 + 64 + 24];
+    const int enclen = encryptGroupText(secret, enc, data, dlen);
+    if (enclen <= 0 || 4 + enclen > maxlen) return 0;
+
+    int f = 0;
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_REQ << 2) | ROUTE_TYPE_FLOOD);
+    frame[f++] = PATH_LEN_INIT;
+    frame[f++] = dest_hash;
+    frame[f++] = ownShortHash;
+    memcpy(frame + f, enc, enclen); f += enclen;
+    return f;
+}
+
+// Простой запрос одного типа: [тип 1][резерв 4][случайные 4]. Раскладку диктует оригинал
+// (BaseChatMesh::sendRequest с req_type), случайный хвост — чтобы два одинаковых запроса
+// не совпали побайтово и второй не выпал в дедупе.
+int buildSimpleReqFrame(uint8_t dest_hash, const uint8_t* dest_pub, uint8_t reqType,
+                        uint32_t* outTag, uint8_t* frame, int maxlen) {
+    uint8_t body[9];
+    body[0] = reqType;
+    memset(&body[1], 0, 4);
+    for (int i = 0; i < 4; i++) body[5 + i] = (uint8_t)random(0, 256);
+    return buildReqFrame(dest_hash, dest_pub, body, (int)sizeof(body), outTag, frame, maxlen);
 }
 
 // Возврат маршрута: отправителю сообщаем дорогу ДО НАС, чтобы он перестал звать нас флудом
@@ -233,6 +324,15 @@ static struct {
     bool firstCopy;             // эта копия ещё НИ РАЗУ не уходила в эфир
     uint8_t frame[256];
 } floodQ[FLOOD_TX_QUEUE_MAX];
+
+// Сколько копий ждёт отправки. Приложение показывает это число на экране состояния узла
+// (у оригинала там длина очереди диспетчера), и по нему видно главное: успевает узел
+// отдавать эфир или копит.
+int meshTxQueuedCount() {
+    int n = 0;
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) if (floodQ[i].dueMs != 0) n++;
+    return n;
+}
 
 static uint32_t floodQueueDrops = 0;
 static uint32_t floodUnsentDrops = 0;

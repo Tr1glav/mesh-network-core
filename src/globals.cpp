@@ -130,6 +130,16 @@ uint32_t ackSentCount = 0;
 uint32_t ackQueueFull = 0;
 uint32_t ackRecvCount = 0;
 uint32_t framesSentCount = 0;   // всего копий ушло в эфир
+// ===== Метрики эфира для приложения и страницы =====
+// Приложение показывает их на экране состояния узла, а главное — по ним считается доля
+// занятого эфира: именно она, а не число пакетов, говорит, сколько сеть ещё выдержит.
+// Складываем расчётное время кадра (radioAirtimeMs), а не измеренное: измерять нечем, а
+// расчёт по формуле LoRa точен до миллисекунд (см. airtime_budget_test).
+uint32_t txAirtimeMs = 0;       // суммарное время НАШИХ передач
+uint32_t rxAirtimeMs = 0;       // суммарное время принятых кадров
+uint32_t rxErrorCount = 0;      // кадры, развалившиеся на приёме (CRC и т.п.)
+uint32_t recvFloodCount = 0;    // принято кадров флудом
+uint32_t recvDirectCount = 0;   // принято кадров по известному пути
 String logTail;
 // used + печать в setup(): иначе линковщик с --gc-sections выбросит строку из образа
 const char fwMarker[] __attribute__((used)) = FW_MARKER;

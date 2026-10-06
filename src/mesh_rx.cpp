@@ -239,11 +239,13 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         return false;
     }
 
-    // GRP_TXT (0x05) — групповые, TXT_MSG (0x02) — личные, PATH (0x08) — возврат маршрута.
-    // У возврата маршрута конверт тот же, что у лички ([адресат][отправитель][MAC][шифр]),
-    // отличается только содержимое, поэтому он разбирается той же веткой.
+    // GRP_TXT (0x05) — групповые, TXT_MSG (0x02) — личные, PATH (0x08) — возврат маршрута,
+    // RESPONSE (0x01) — ответ ретранслятора на вход, запрос состояния или телеметрии.
+    // У всех трёх, кроме группового, конверт один и тот же ([адресат][отправитель][MAC]
+    // [шифр]) — отличается только содержимое, поэтому разбирает их одна ветка.
     if (payload_type != 0x05 && payload_type != PAYLOAD_TYPE_TXT_MSG
-        && payload_type != PAYLOAD_TYPE_PATH) {
+        && payload_type != PAYLOAD_TYPE_PATH
+        && payload_type != PAYLOAD_TYPE_RESPONSE) {
         // ADVERT (0x04): кэшируем публичные ключи нод — без них не ответить
         // в личку (нужен полный pubkey для X25519). В кадре: [pub 32][ts 4][sig 64][app...].
         if (payload_type == 0x04) {
@@ -332,7 +334,8 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     // ей здесь и место — на уровне функции, рядом с остальным, что отдаётся приложению.
     uint32_t chSenderTs = 0;
 
-    if (payload_type == PAYLOAD_TYPE_TXT_MSG || payload_type == PAYLOAD_TYPE_PATH) {
+    if (payload_type == PAYLOAD_TYPE_TXT_MSG || payload_type == PAYLOAD_TYPE_PATH
+        || payload_type == PAYLOAD_TYPE_RESPONSE) {
         // Личное сообщение: payload = [dest_hash 1B][src_hash 1B][MAC 2B][cipher...].
         // Шифруется общим секретом X25519 — текст без ключей ноды не прочитать,
         // но dest_hash (первый байт) показывает, адресовано ли сообщение НАМ.
@@ -390,6 +393,24 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             if (dmPlainLen > 5) {
                 for (int i = 5; i < dmPlainLen && dmPlain[i]; i++) text += (char)dmPlain[i];
             }
+            // ОТВЕТ РЕТРАНСЛЯТОРА (RESPONSE). Содержимое двоичное, а не текст:
+            // [метка 4][тело]. Метка — та, с которой уходил запрос (вход, состояние,
+            // телеметрия): по ней прошивка и узнаёт, на что этот ответ. Разбирать тело
+            // ядру незачем — оно разное у каждого типа запроса и нужно только приложению.
+            if (payload_type == PAYLOAD_TYPE_RESPONSE) {
+                if (dmPlainLen < 4) {
+                    Serial.println("[REQ] ответ короче метки — HMAC не совпал или кадр битый");
+                } else {
+                    uint32_t tag = 0;
+                    memcpy(&tag, dmPlain, 4);
+                    Serial.printf("[REQ] ответ от <%02X>: метка %08lX, тело %d Б\n",
+                                  dmSrc, (unsigned long)tag, dmPlainLen - 4);
+                    mcOnResponseRecv(dmSrc, dmPeerPub, dmPlain, dmPlainLen);
+                }
+                lastMessage = "";
+                return false;        // в канале показывать нечего: это служебный кадр
+            }
+
             // ВОЗВРАТ МАРШРУТА. Конверт тот же, содержимое другое:
             // [длина пути 1][путь][тип довеска 1][довесок]. Отправитель присылает его,
             // приняв нашу личку флудом, — так мы узнаём дорогу ДО НЕГО, и именно её
@@ -418,6 +439,13 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                         if (extraType == PAYLOAD_TYPE_ACK && extraLen >= 4) {
                             ackRecvCount++;
                             mcOnAckRecv(extra);
+                        } else if (extraType == PAYLOAD_TYPE_RESPONSE && extraLen >= 4) {
+                            // Так приходит ответ на запрос, ушедший ФЛУДОМ: ретранслятор
+                            // кладёт его довеском к возврату маршрута, чтобы не слать
+                            // второй пакет (BaseChatMesh::onPeerDataRecv, ветка REQ).
+                            // Без этой ветки ответ на первый запрос — пока путь ещё не
+                            // известен — терялся бы всегда.
+                            mcOnResponseRecv(dmSrc, dmPeerPub, extra, extraLen);
                         }
                     }
                 }
@@ -508,6 +536,10 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     }
 
     packetCount++;
+    // Флуд или направленный — разбивка нужна приложению: по ней видно, пользуется ли сеть
+    // известными путями или всё ещё разливается по всем.
+    if (route_type == ROUTE_TYPE_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_FLOOD) recvFloodCount++;
+    else recvDirectCount++;
     lastRSSI = meta.rssi;
     lastSNR = meta.snr;
     lastHopCount = hop_count;

@@ -174,6 +174,14 @@ extern uint32_t ackSentCount;
 extern uint32_t ackQueueFull;
 extern uint32_t ackRecvCount;
 extern uint32_t framesSentCount;   // всего копий ушло в эфир
+// Метрики эфира: расчётное время наших передач и принятых кадров, кадры с битым CRC и
+// разбивка приёма на флуд и направленный. Их показывает приложение и по ним считается
+// занятость эфира.
+extern uint32_t txAirtimeMs;
+extern uint32_t rxAirtimeMs;
+extern uint32_t rxErrorCount;
+extern uint32_t recvFloodCount;
+extern uint32_t recvDirectCount;
 
 // Какие из этих счётчиков в ЭТОЙ сборке вообще МОГУТ стать ненулевыми. Решение принимает
 // ядро, а не страница: у ядра два потребителя, и каждый повторил бы условие своей копией.

@@ -74,6 +74,9 @@ int txFrame(uint8_t* frame, int f) {
 
     waitChannelFree();
     framesSentCount++;
+    // Время эфира складываем расчётом по длине кадра: по нему приложение и страница
+    // показывают занятость эфира, а она решает, сколько сеть ещё выдержит.
+    txAirtimeMs += (uint32_t)radioAirtimeMs(f);
     #if HAS_FEM
     digitalWrite(FEM_TX_PIN, HIGH);
     #endif

@@ -45,12 +45,28 @@ int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxle
 // подтверждение, которое прилетит на этот кадр, не совпадало ни с чем, что знает приложение.
 // msgTs == 0 означает «по часам узла» — для ответов самого узла (mesh_rx.cpp), у которых
 // метки приложения нет вовсе.
+// txtType — тип текста из приложения: 0 обычное сообщение, 1 команда командной строки
+// (ею управляют ретранслятором). Уезжает в эфир в старших битах байта флагов, иначе узел на
+// той стороне прочитает команду как беседу.
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           const String& msg, uint8_t* frame, int maxlen,
                           uint8_t* expectedAck4 = NULL,
-                          uint32_t msgTs = 0, uint8_t attempt = 0);
+                          uint32_t msgTs = 0, uint8_t attempt = 0, uint8_t txtType = 0);
 // logHex печатает кадр в журнал. Выключайте, когда кадр уже напечатан: копии флуда
 // побайтово равны, и дамп на каждую копию только тормозит UART, ничего не добавляя.
+// Вход на ретранслятор: кадр ANON_REQ с паролем. Конверт несёт НАШ ПОЛНЫЙ ключ — узел нас
+// ещё не знает, и общий секрет ему вывести больше неоткуда. outTag — метка, с которой
+// придёт ответ.
+int buildLoginFrame(uint8_t dest_hash, const uint8_t* dest_pub, const char* password,
+                    uint32_t* outTag, uint8_t* frame, int maxlen);
+// Запрос к ретранслятору: конверт как у лички, содержимое [метка 4][тело]. Ответ придёт с
+// той же меткой — по ней и сопоставляется, кому он принадлежит.
+int buildReqFrame(uint8_t dest_hash, const uint8_t* dest_pub,
+                  const uint8_t* reqData, int reqLen,
+                  uint32_t* outTag, uint8_t* frame, int maxlen);
+// Он же для запроса одного типа (REQ_TYPE_*): тело [тип 1][резерв 4][случайные 4].
+int buildSimpleReqFrame(uint8_t dest_hash, const uint8_t* dest_pub, uint8_t reqType,
+                        uint32_t* outTag, uint8_t* frame, int maxlen);
 // Возврат маршрута отправителю: дорога ДО НАС плюс необязательный довесок (обычно
 // подтверждение доставки). Конверт тот же, что у лички; см. buildPathReturnFrame.
 int buildPathReturnFrame(uint8_t dest_hash, const uint8_t* dest_pub,
@@ -92,6 +108,8 @@ void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs = 
 // То же, но БЕЗ выхода в эфир из вызывающего кода: все копии, включая первую, уходят из
 // meshTxTick(). Для тех, кто обязан ответить сразу, — например обработчика команды
 // приложения-компаньона: иначе подтверждение опаздывает на ожидание канала и время кадра.
+// Сколько копий ждёт своей очереди в эфир: метрика для приложения и страницы.
+int meshTxQueuedCount();
 void floodSendQueued(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs = 0,
                      int repeats = FLOOD_REPEATS);
 void sensorSendMsg(const char* msg, unsigned int gapBaseMs = 0, int repeats = FLOOD_REPEATS);

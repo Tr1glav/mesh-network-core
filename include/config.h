@@ -245,6 +245,22 @@
 #define PAYLOAD_TYPE_PATH       0x08
 #define PAYLOAD_TYPE_TRACE      0x09
 
+// ===== ЗАПРОСЫ К РЕТРАНСЛЯТОРУ И СЕРВЕРУ =====
+// Содержимое кадра REQ начинается с типа запроса. Числа — из оригинала
+// (examples/simple_repeater/MyMesh.cpp): отвечают на эти запросы ЧУЖИЕ узлы, и
+// договариваться с ними можно только их числами. Вход — ANON_REQ с паролем, дальше
+// по той же связи идут запросы состояния и телеметрии, а управление — командной
+// строкой в личке с типом текста CLI.
+#define REQ_TYPE_GET_STATUS         0x01   // метрики ретранслятора (RepeaterStats)
+#define REQ_TYPE_KEEP_ALIVE         0x02   // продлить сессию входа
+#define REQ_TYPE_GET_TELEMETRY_DATA 0x03   // телеметрия датчиков
+#define REQ_TYPE_GET_ACCESS_LIST    0x05
+#define REQ_TYPE_GET_NEIGHBOURS     0x06
+// Первый байт ответа на вход (после четырёхбайтовой метки): 0 — вход разрешён.
+#define RESP_SERVER_LOGIN_OK        0x00
+// Пароль входа длиннее оригинал не принимает.
+#define LOGIN_PASSWORD_MAX          15
+
 #define ROUTE_TYPE_TRANSPORT_FLOOD  0x00   // флуд с транспортными кодами
 #define ROUTE_TYPE_FLOOD            0x01   // флуд, путь достраивается хопами — наш случай
 #define ROUTE_TYPE_DIRECT           0x02   // передача по известному пути

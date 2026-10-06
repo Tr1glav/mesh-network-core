@@ -120,6 +120,12 @@ void mcOnPathRecv(uint8_t srcHash, uint8_t pathLen, const uint8_t* path,
     (void)srcHash; (void)pathLen; (void)path; (void)extraType; (void)extra; (void)extraLen;
 }
 
+// ===== ОТВЕТ РЕТРАНСЛЯТОРА =====
+__attribute__((weak))
+void mcOnResponseRecv(uint8_t srcHash, const uint8_t* srcPub, const uint8_t* data, int len) {
+    (void)srcHash; (void)srcPub; (void)data; (void)len;
+}
+
 // ===== СЫРОЙ ЖУРНАЛ ПРИЁМА =====
 __attribute__((weak))
 void mcOnRawRx(const uint8_t* raw, int len, float snr, float rssi) {

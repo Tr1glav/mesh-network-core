@@ -59,7 +59,10 @@ void radioRxTick() {
                     // (Dispatcher::checkRecv -> logRxRaw): приложение видит собственный
                     // пакет, переизданный ретранслятором, и ставит в переписке отметку
                     // «принято ретранслятором». После дедупа этого события не остаётся.
-                    if (pktLen > 0) mcOnRawRx(buffer, pktLen, snr, rssi);
+                    if (pktLen > 0) {
+                        mcOnRawRx(buffer, pktLen, snr, rssi);
+                        rxAirtimeMs += (uint32_t)radioAirtimeMs(pktLen);
+                    }
                     // Лог каждого кадра стоит миллисекунды UART, поэтому в быстром режиме его нет
                     // вовсе — а здесь мы уже заведомо не в нём.
                     if (pktLen > 0) {
@@ -132,7 +135,9 @@ void radioRxTick() {
             } else {
                 // Захват сорвался (CRC и т.п.) — флаг RX_DONE мог остаться,
                 // что приведёт к бесконечному циклу. Сбрасываем флаги и ре-армим.
-                Serial.printf("[RX] readData error %d, re-arming\n", state);
+                rxErrorCount++;
+                Serial.printf("[RX] readData error %d, re-arming (всего %lu)\n", state,
+                              (unsigned long)rxErrorCount);
                 if (otaFastMode) fastRxErrors++;
                 radio.clearIrqStatus();
                 rearmRadioAGC();
