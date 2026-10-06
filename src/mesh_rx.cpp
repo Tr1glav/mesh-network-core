@@ -27,6 +27,51 @@ void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_c
     }
 }
 
+// Подтверждение доставки стоит ВЫШЕ #ifndef SENSOR_NODE намеренно: личку получает и
+// сенсор, и подтверждать доставку обязан он тоже. Внутри блока функция была не видна
+// там, где нужна, и сборка падала на неразрешённом вызове.
+// ===== Подтверждение доставки личного сообщения =====
+// Копия поведения оригинального MeshCore (BaseChatMesh::onPeerDataRecv): приняв личку, узел
+// отвечает пакетом PAYLOAD_TYPE_ACK с хэшем принятого, и по нему отправитель показывает
+// «доставлено». Без этого ответа сообщение у отправителя навсегда остаётся неподтверждённым —
+// именно так наши узлы и выглядели для чужих клиентов.
+//
+// Хэш считается ровно как там: sha256 по открытому тексту до конца текста ([время 4][тип 1]
+// [текст]) И публичному ключу ОТПРАВИТЕЛЯ, обрезанный до четырёх байт. Пятый байт — байт
+// расширенной попытки из того же открытого текста, шестой случайный: они не участвуют в
+// сверке (принимающая сторона читает первые четыре), а нужны, чтобы хэш самого пакета
+// подтверждения не повторялся и не отбрасывался дедупом как дубликат.
+static void dmAckSend(const uint8_t* plain, int plainLen, const uint8_t* peerPub) {
+    if (plainLen <= 5 || peerPub == NULL) return;
+    int textLen = 0;
+    while (5 + textLen < plainLen && plain[5 + textLen]) textLen++;
+
+    uint8_t ack[6];
+    sha256Trunc(ack, 4, plain, 5 + textLen, peerPub, 32);
+    const int attemptAt = 5 + textLen + 1;
+    ack[4] = (attemptAt < plainLen) ? plain[attemptAt] : 0;
+    ack[5] = (uint8_t)random(0, 256);
+
+    uint8_t frame[16];
+    int f = 0;
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ACK << 2) | ROUTE_TYPE_FLOOD);
+    frame[f++] = PATH_LEN_INIT;          // путь достроят ретрансляторы
+    memcpy(frame + f, ack, sizeof(ack)); f += sizeof(ack);
+
+    // Через очередь с задержкой, а не сразу: отправитель ещё доканчивает свои копии и, пока
+    // передаёт, нас не слышит (см. ACK_DELAY_* в config.h).
+    const unsigned long delayMs = random(ACK_DELAY_MIN_MS, ACK_DELAY_MAX_MS);
+    if (meshTxQueueFrame(frame, f, delayMs)) {
+        ackSentCount++;
+        Serial.printf("[DM] подтверждение %02X%02X%02X%02X уйдёт через %lu мс\n",
+                      ack[0], ack[1], ack[2], ack[3], delayMs);
+    } else {
+        ackQueueFull++;
+        Serial.printf("[DM] очередь занята — подтверждение не отправлено (всего %lu)\n",
+                      (unsigned long)ackQueueFull);
+    }
+}
+
 #ifndef SENSOR_NODE
 // Ответ на пинг и на личку уходит не сразу: пока отправитель доканчивает свои повторы, он
 // нас не слышит (радио полудуплексное), а при одинаковой у всех паузе несколько узлов
@@ -64,6 +109,7 @@ static void scheduleReply(bool dm, uint8_t dmSrc, int chIdx, const char* text) {
     pendingReply.dueMs = millis() + random(PING_REPLY_DELAY_MIN_MS, PING_REPLY_DELAY_MAX_MS);
     if (pendingReply.dueMs == 0) pendingReply.dueMs = 1;   // 0 занято признаком «нет заявки»
 }
+
 
 void meshReplyTick() {
     if (pendingReply.dueMs == 0) return;
@@ -132,6 +178,30 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     uint8_t header = data[0];
     uint8_t payload_type = (header >> 2) & 0x0F;
     uint8_t route_type = header & 0x03;
+
+    // ПОДТВЕРЖДЕНИЕ ДОСТАВКИ (0x03). Разбирается здесь, а не вместе с текстом: у него нет ни
+    // адресата, ни канала — только хэш принятого сообщения, и сверяет его тот, кто это
+    // сообщение отправлял. Раньше этот тип не разбирался вовсе: чужие подтверждения доходили
+    // и молча отбрасывались, а значит «доставлено» мы не могли показать никогда.
+    //
+    // Сверяются ПЕРВЫЕ ЧЕТЫРЕ байта, как в оригинале (Mesh::onRecvPacket): пятый и шестой
+    // нужны только для того, чтобы хэш самого пакета не повторялся.
+    if (payload_type == PAYLOAD_TYPE_ACK) {
+        int o = 1;
+        if (route_type == ROUTE_TYPE_TRANSPORT_FLOOD || route_type == ROUTE_TYPE_TRANSPORT_DIRECT) o += 4;
+        if (o < len) {
+            uint8_t pl = data[o++];
+            o += (pl & 0x3F) * (((pl >> 6) & 3) + 1);   // путь
+            if (o + 4 <= len) {
+                ackRecvCount++;
+                Serial.printf("[ACK] подтверждение %02X%02X%02X%02X (всего %lu)\n",
+                              data[o], data[o + 1], data[o + 2], data[o + 3],
+                              (unsigned long)ackRecvCount);
+                mcOnAckRecv(&data[o]);
+            }
+        }
+        return false;
+    }
 
     // GRP_TXT (0x05) — групповые сообщения, TXT_MSG (0x02) — личные (ДМ).
     if (payload_type != 0x05 && payload_type != 0x02) {
@@ -261,8 +331,17 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             uint8_t* dmMac = &data[offset + 2];          // 2 байта MAC
             int dmCtLen = len - (offset + 4);
             dmCtLen &= ~15;                              // хвост не кратного 16 блока — мусор
-            String text = dmCtLen > 0
-                ? decryptGroupText(dmSecret, dmMac, &data[offset + 4], dmCtLen) : String("");
+            // Расшифровываем В БУФЕР, а не сразу в строку: подтверждение доставки
+            // считается по открытому тексту ЦЕЛИКОМ ([время 4][тип 1][текст]), как в
+            // оригинале, а не по одному тексту.
+            uint8_t dmPlain[GROUP_TEXT_MAX];
+            int dmPlainLen = dmCtLen > 0
+                ? decryptGroupRaw(dmSecret, dmMac, &data[offset + 4], dmCtLen,
+                                  dmPlain, sizeof(dmPlain)) : 0;
+            String text = "";
+            if (dmPlainLen > 5) {
+                for (int i = 5; i < dmPlainLen && dmPlain[i]; i++) text += (char)dmPlain[i];
+            }
             if (text.length() == 0) {
                 Serial.println("[DM] HMAC не совпал или личное сообщение пустое");
             } else {
@@ -270,6 +349,7 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 // отдаём то, что видно в кадре: короткий хэш. Имя узла приложение знает из
                 // адверта и подставит само по контакту.
                 lastMessage = text;
+                dmAckSend(dmPlain, dmPlainLen, dmPeerPub);
             }
         }
         if (lastMessage.length() == 0) lastMessage = "(личное сообщение)";

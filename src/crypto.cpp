@@ -53,9 +53,47 @@ int encryptGroupText(const uint8_t* secret32, uint8_t* dest, const uint8_t* src,
     return 2 + padded;
 }
 
-// Рабочий буфер расшифровки группового текста. Назван константой, чтобы предел длины и сам
-// буфер не разъехались: они обязаны меняться вместе.
-#define GROUP_TEXT_MAX 256
+// Расшифровка в буфер вызывающего. Всё, что раньше делала decryptGroupText, живёт здесь:
+// одна проверка HMAC, одна расшифровка. Текстовая обёртка ниже просто вырезает из результата
+// строку. Две копии расшифровки разъехались бы молча — проверка HMAC в одной и отсутствие её
+// в другой выглядят одинаково, пока кто-нибудь не подделает кадр.
+int decryptGroupRaw(const uint8_t* secret32, uint8_t* mac, uint8_t* ciphertext, int len,
+                    uint8_t* out, int outCap) {
+    if (len <= 0 || len % 16 != 0) return 0;
+    if (len > GROUP_TEXT_MAX || len > outCap) return 0;
+
+    // Проверяем HMAC-SHA256(ciphertext) с полным 32-байтным секретом
+    uint8_t hmac_out[32];
+    mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                    secret32, 32,
+                    ciphertext, len, hmac_out);
+    if (hmac_out[0] != mac[0] || hmac_out[1] != mac[1]) return 0;
+
+    // AES-128-ECB расшифровка
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_setkey_dec(&aes, secret32, 128);
+    for (int i = 0; i < len; i += 16) {
+        mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, ciphertext + i, out + i);
+    }
+    mbedtls_aes_free(&aes);
+    return len;
+}
+
+void sha256Trunc(uint8_t* out, int outLen, const uint8_t* a, int aLen,
+                 const uint8_t* b, int bLen) {
+    if (outLen <= 0 || outLen > 32) return;
+    uint8_t full[32];
+    mbedtls_md_context_t ctx;
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
+    mbedtls_md_starts(&ctx);
+    if (a && aLen > 0) mbedtls_md_update(&ctx, a, aLen);
+    if (b && bLen > 0) mbedtls_md_update(&ctx, b, bLen);
+    mbedtls_md_finish(&ctx, full);
+    mbedtls_md_free(&ctx);
+    memcpy(out, full, outLen);
+}
 
 String decryptGroupText(const uint8_t* secret32, uint8_t* mac, uint8_t* ciphertext, int len) {
     if (len <= 0 || len % 16 != 0) return "";
@@ -65,23 +103,10 @@ String decryptGroupText(const uint8_t* secret32, uint8_t* mac, uint8_t* cipherte
     // из тестов, — и переполнение стека станет тихим.
     if (len > GROUP_TEXT_MAX) return "";
 
-    // Проверяем HMAC-SHA256(ciphertext) с полным 32-байтным секретом
-    uint8_t hmac_out[32];
-    mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
-                    secret32, 32,
-                    ciphertext, len, hmac_out);
-    if (hmac_out[0] != mac[0] || hmac_out[1] != mac[1]) return "";
-
-    // AES-128-ECB расшифровка
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    mbedtls_aes_setkey_dec(&aes, secret32, 128);
-
     uint8_t plaintext[GROUP_TEXT_MAX];
-    for (int i = 0; i < len; i += 16) {
-        mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, ciphertext + i, plaintext + i);
+    if (decryptGroupRaw(secret32, mac, ciphertext, len, plaintext, sizeof(plaintext)) <= 0) {
+        return "";
     }
-    mbedtls_aes_free(&aes);
 
     // plaintext: [timestamp 4B][txt_type 1B][text...]
     String message = "";

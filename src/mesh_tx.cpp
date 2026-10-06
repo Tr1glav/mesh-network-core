@@ -440,6 +440,17 @@ String channelListStr() {
     return s;
 }
 
+// Поставить готовый кадр в очередь отправки с задержкой. Нужна тем ответам, которые обязаны
+// уйти ПОЗЖЕ, а не сейчас: подтверждение доставки личного сообщения ждёт, пока отправитель
+// доканчивает свои копии (см. ACK_DELAY_* в config.h) — пока он передаёт, он нас не слышит.
+//
+// Отдельного таймера для этого не заводим: очередь копий уже умеет «кадр и срок», и тик уже
+// отдаёт по одному кадру за проход. Второй механизм с тем же смыслом разъехался бы с этим.
+bool meshTxQueueFrame(const uint8_t* frame, int f, unsigned long delayMs) {
+    if (f <= 0 || f > 255) return false;
+    return floodQueueCopy(-1, frame, f, millis() + delayMs, true);
+}
+
 void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
     floodSendImpl(chIdx, frame, f, gapBaseMs, repeats, true);
 }

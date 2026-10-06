@@ -108,6 +108,12 @@ bool mcButtonDown() {
 __attribute__((weak))
 void mcCompanionTick() {}
 
+// ===== ПОДТВЕРЖДЕНИЕ ДОСТАВКИ =====
+__attribute__((weak))
+void mcOnAckRecv(const uint8_t ack4[4]) {
+    (void)ack4;
+}
+
 // ===== «ВТОРЫЕ УШИ» =====
 __attribute__((weak))
 void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {

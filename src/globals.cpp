@@ -126,6 +126,9 @@ uint32_t relayQueueDrops = 0;   // очередь переизданий был�
 uint32_t replyDropped = 0;      // запрос требовал ответа, а предыдущий ещё не ушёл
 uint32_t replyDeferred = 0;     // ответ сдвинут из-за идущей медленной прошивки
 uint32_t dmNoPubkey = 0;        // не нашли публичный ключ: advert узла до нас не дошёл
+uint32_t ackSentCount = 0;
+uint32_t ackQueueFull = 0;
+uint32_t ackRecvCount = 0;
 uint32_t framesSentCount = 0;   // всего копий ушло в эфир
 String logTail;
 // used + печать в setup(): иначе линковщик с --gc-sections выбросит строку из образа
