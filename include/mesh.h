@@ -30,8 +30,13 @@ void loadTxChannel();
 void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_count, uint8_t path_hash_size);
 int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc);
 int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen);
+// expectedAck4 — куда положить хэш подтверждения, которое ПРИДЁТ на это сообщение. Считается
+// здесь, а не у вызывающего, потому что считается по тому же открытому тексту, который
+// собирается внутри: вынеси расчёт наружу — и он разойдётся с кадром при первой правке
+// раскладки. Получатель считает тот же хэш по нашему публичному ключу (см. dmAckSend).
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
-                          const String& msg, uint8_t* frame, int maxlen);
+                          const String& msg, uint8_t* frame, int maxlen,
+                          uint8_t* expectedAck4 = NULL);
 // logHex печатает кадр в журнал. Выключайте, когда кадр уже напечатан: копии флуда
 // побайтово равны, и дамп на каждую копию только тормозит UART, ничего не добавляя.
 int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex = true);

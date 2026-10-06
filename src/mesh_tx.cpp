@@ -106,7 +106,8 @@ int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxle
 }
 
 int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
-                          const String& msg, uint8_t* frame, int maxlen) {
+                          const String& msg, uint8_t* frame, int maxlen,
+                          uint8_t* expectedAck4) {
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
 
@@ -118,6 +119,12 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     size_t ml = min((size_t)DM_TEXT_MAX, (size_t)msg.length());
     memcpy(data + dlen, msg.c_str(), ml); dlen += ml;
     data[dlen++] = 0;                        // null terminator
+
+    // Хэш подтверждения, которое получатель пришлёт на это сообщение: по открытому тексту
+    // ДО завершающего нуля и по НАШЕМУ публичному ключу. Ровно так его считает получатель
+    // (dmAckSend), только ключ берёт из своего кэша. Считаем до шифрования: шифротекст тут
+    // не участвует.
+    if (expectedAck4) sha256Trunc(expectedAck4, 4, data, 5 + (int)ml, bot_pub, 32);
 
     uint8_t enc[DM_TEXT_MAX + 24];           // MAC 2 + шифр, дополненный до кратного 16
     int enclen = encryptGroupText(secret, enc, data, dlen);   // [MAC 2B][cipher]
