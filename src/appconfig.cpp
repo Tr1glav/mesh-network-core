@@ -182,6 +182,30 @@ void cfgPrint(bool secrets) {
     Serial.printf("  настроено: %s\n", cfgReady() ? "да" : "НЕТ — задайте хотя бы name");
 }
 
+// Питание периферии. Единственное место, где этот пин трогают: и старт прошивки, и
+// команда «cfg vext» ходят сюда, иначе защита платы жила бы только в одном из них.
+void vextApply(uint16_t vextOn) {
+    #if defined(VEXT_PIN)
+    pinMode(VEXT_PIN, OUTPUT);
+    #if VEXT_IS_BOARD_POWER
+    // Пин питает ВСЮ плату (T-Deck: GPIO10 BOARD_POWERON). Выключить его настройкой
+    // значит погасить узел целиком, поэтому настройка здесь ничего не решает — но молчать
+    // об этом нельзя: иначе «я же выключил, а оно горит» не объяснить.
+    digitalWrite(VEXT_PIN, VEXT_EN_ACTIVE);
+    if (!vextOn)
+        Serial.printf("[CFG] vext=0 не применён: пин %d питает всю плату, выключение "
+                      "погасило бы узел целиком\n", (int)VEXT_PIN);
+    #else
+    digitalWrite(VEXT_PIN, vextOn ? HIGH : LOW);
+    Serial.printf("[CFG] питание периферии: пин %d -> %s\n",
+                  (int)VEXT_PIN, vextOn ? "HIGH" : "LOW");
+    #endif
+    #else
+    (void)vextOn;
+    Serial.println("[CFG] у этой платы нет управляемого питания периферии");
+    #endif
+}
+
 static void cfgHelp() {
     Serial.println("\n[CFG] команды настройки:");
     Serial.println("  show            показать настройки (пароли скрыты)");
@@ -267,14 +291,8 @@ static void cfgHandleLine(String line) {
     }
     if (verb == "vext") {
         cfg.vextOn = (uint16_t)rest.toInt();
-        #if defined(VEXT_PIN)
-        pinMode(VEXT_PIN, OUTPUT);
-        digitalWrite(VEXT_PIN, cfg.vextOn ? HIGH : LOW);
-        Serial.printf("[CFG] питание периферии: пин %d -> %s (нужен save)\n",
-                      (int)VEXT_PIN, cfg.vextOn ? "HIGH" : "LOW");
-        #else
-        Serial.println("[CFG] у этой платы нет управляемого питания периферии");
-        #endif
+        vextApply(cfg.vextOn);
+        Serial.println("[CFG] питание периферии применено (нужен save)");
         return;
     }
     if (verb == "help") { cfgHelp(); return; }
