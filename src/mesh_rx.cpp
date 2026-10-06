@@ -236,7 +236,43 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         char senderHex[8];
         snprintf(senderHex, sizeof(senderHex), "<%02X>", dmSrc);
         lastSender = senderHex;
-        lastMessage = "(личное сообщение)";
+        // ТЕКСТ ЛИЧНОГО СООБЩЕНИЯ РАСШИФРОВЫВАЕТСЯ. Раньше здесь стояла константа
+        // «(личное сообщение)»: кадр доходил, адресат проверялся, а содержимое не читалось
+        // никогда. Снаружи это «сообщения не доходят» — сообщение в сети есть, на экране узла
+        // и в приложении вместо него заглушка. Расшифровывать умеет только отправитель: общий
+        // секрет X25519 считается из нашего приватного ключа и ПУБЛИЧНОГО ключа отправителя,
+        // а он лежит в кэше — rememberPeerPub кладут туда на каждом адверте.
+        //
+        // Раскладка открытого текста та же, что у группового: [время 4][тип 1][текст][0],
+        // и decryptGroupText пропускает ровно эти пять байт. Отличается только ключ.
+        uint8_t* dmPeerPub = findPeerPub(dmSrc);
+        if (dmPeerPub == NULL) {
+            // Ключа нет — прочитать нечем. Это не «сообщение пустое», и молчать об этом нельзя:
+            // advert отправителя до нас не дошёл, и повторная отправка ничего не изменит, пока
+            // он снова не придёт.
+            dmNoPubkey++;
+            Serial.printf("[DM] pubkey <%02X> неизвестен (нет advert) — личное сообщение не "
+                          "прочитано (всего %lu: advert узла до нас не дошёл)\n",
+                          dmSrc, (unsigned long)dmNoPubkey);
+            lastMessage = "";
+        } else {
+            uint8_t dmSecret[32];
+            ed25519_key_exchange(dmSecret, dmPeerPub, bot_prv64);
+            uint8_t* dmMac = &data[offset + 2];          // 2 байта MAC
+            int dmCtLen = len - (offset + 4);
+            dmCtLen &= ~15;                              // хвост не кратного 16 блока — мусор
+            String text = dmCtLen > 0
+                ? decryptGroupText(dmSecret, dmMac, &data[offset + 4], dmCtLen) : String("");
+            if (text.length() == 0) {
+                Serial.println("[DM] HMAC не совпал или личное сообщение пустое");
+            } else {
+                // Отправитель не присылает своё имя (в личке для этого нет поля), поэтому
+                // отдаём то, что видно в кадре: короткий хэш. Имя узла приложение знает из
+                // адверта и подставит само по контакту.
+                lastMessage = text;
+            }
+        }
+        if (lastMessage.length() == 0) lastMessage = "(личное сообщение)";
     } else {
         uint8_t channel_hash = data[offset++];
         if (offset + 2 > len) return false;
