@@ -139,6 +139,49 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     return f;
 }
 
+// Возврат маршрута: отправителю сообщаем дорогу ДО НАС, чтобы он перестал звать нас флудом
+// и показал маршрут в приложении. Копия Mesh::createPathReturn оригинала: конверт тот же,
+// что у лички, а в шифруемом содержимом — [длина пути 1][путь][тип довеска 1][довесок].
+//
+// Довеском идёт подтверждение доставки: оригинал кладёт его сюда ровно затем, чтобы не
+// слать два пакета подряд. Без довеска туда пишется 0xFF и четыре случайных байта — иначе
+// два возврата одного и того же маршрута совпали бы побайтово, и второй отбросил бы дедуп.
+int buildPathReturnFrame(uint8_t dest_hash, const uint8_t* dest_pub,
+                         uint8_t pathLen, const uint8_t* path,
+                         uint8_t extraType, const uint8_t* extra, int extraLen,
+                         uint8_t* frame, int maxlen) {
+    const uint8_t hsize = (pathLen >> 6) + 1;
+    const uint8_t hops = pathLen & 0x3F;
+    const int pathBytes = (int)hops * hsize;
+
+    uint8_t data[GROUP_TEXT_MAX];
+    int dlen = 0;
+    if (1 + pathBytes + 1 + (extraLen > 0 ? extraLen : 4) > (int)sizeof(data)) return 0;
+    data[dlen++] = pathLen;
+    memcpy(data + dlen, path, pathBytes); dlen += pathBytes;
+    if (extraLen > 0) {
+        data[dlen++] = extraType;
+        memcpy(data + dlen, extra, extraLen); dlen += extraLen;
+    } else {
+        data[dlen++] = 0xFF;                       // довеска нет
+        for (int i = 0; i < 4; i++) data[dlen++] = (uint8_t)random(0, 256);
+    }
+
+    uint8_t secret[32];
+    ed25519_key_exchange(secret, dest_pub, bot_prv64);
+    uint8_t enc[GROUP_TEXT_MAX + 24];
+    const int enclen = encryptGroupText(secret, enc, data, dlen);
+    if (enclen <= 0 || 4 + enclen > maxlen) return 0;
+
+    int f = 0;
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_PATH << 2) | ROUTE_TYPE_FLOOD);
+    frame[f++] = PATH_LEN_INIT;
+    frame[f++] = dest_hash;
+    frame[f++] = ownShortHash;
+    memcpy(frame + f, enc, enclen); f += enclen;
+    return f;
+}
+
 int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
     if (chIdx < 0 || chIdx >= numChannels) return RADIOLIB_ERR_UNKNOWN;
     // hex-лог кадра стоит ~40 мс на UART для 245-байтного кадра — в fast-режиме молчим.

@@ -114,6 +114,18 @@ void mcOnAckRecv(const uint8_t ack4[4]) {
     (void)ack4;
 }
 
+__attribute__((weak))
+void mcOnPathRecv(uint8_t srcHash, uint8_t pathLen, const uint8_t* path,
+                  uint8_t extraType, const uint8_t* extra, int extraLen) {
+    (void)srcHash; (void)pathLen; (void)path; (void)extraType; (void)extra; (void)extraLen;
+}
+
+// ===== СЫРОЙ ЖУРНАЛ ПРИЁМА =====
+__attribute__((weak))
+void mcOnRawRx(const uint8_t* raw, int len, float snr, float rssi) {
+    (void)raw; (void)len; (void)snr; (void)rssi;
+}
+
 // ===== «ВТОРЫЕ УШИ» =====
 __attribute__((weak))
 void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr) {

@@ -39,6 +39,12 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
                           uint8_t* expectedAck4 = NULL);
 // logHex печатает кадр в журнал. Выключайте, когда кадр уже напечатан: копии флуда
 // побайтово равны, и дамп на каждую копию только тормозит UART, ничего не добавляя.
+// Возврат маршрута отправителю: дорога ДО НАС плюс необязательный довесок (обычно
+// подтверждение доставки). Конверт тот же, что у лички; см. buildPathReturnFrame.
+int buildPathReturnFrame(uint8_t dest_hash, const uint8_t* dest_pub,
+                         uint8_t pathLen, const uint8_t* path,
+                         uint8_t extraType, const uint8_t* extra, int extraLen,
+                         uint8_t* frame, int maxlen);
 int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex = true);
 // Пауза между копиями флуда: случайная величина из FLOOD_RETRY_MIN_MS…MAX_MS плюс
 // FLOOD_JITTER_MS разброса поверх, чтобы соседи не повторяли копии синхронно.

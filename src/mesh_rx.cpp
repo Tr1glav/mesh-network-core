@@ -41,7 +41,9 @@ void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_c
 // расширенной попытки из того же открытого текста, шестой случайный: они не участвуют в
 // сверке (принимающая сторона читает первые четыре), а нужны, чтобы хэш самого пакета
 // подтверждения не повторялся и не отбрасывался дедупом как дубликат.
-static void dmAckSend(const uint8_t* plain, int plainLen, const uint8_t* peerPub) {
+static void dmAckSend(const uint8_t* plain, int plainLen, const uint8_t* peerPub,
+                      uint8_t srcHash, bool viaFlood, uint8_t inPathLen,
+                      const uint8_t* inPath) {
     if (plainLen <= 5 || peerPub == NULL) return;
     int textLen = 0;
     while (5 + textLen < plainLen && plain[5 + textLen]) textLen++;
@@ -52,11 +54,23 @@ static void dmAckSend(const uint8_t* plain, int plainLen, const uint8_t* peerPub
     ack[4] = (attemptAt < plainLen) ? plain[attemptAt] : 0;
     ack[5] = (uint8_t)random(0, 256);
 
-    uint8_t frame[16];
+    // Пришло флудом — возвращаем отправителю дорогу до нас, а подтверждение кладём
+    // довеском: так делает оригинал, и это один пакет вместо двух. Отправитель по этому
+    // маршруту и покажет «обратный маршрут» в приложении, и сможет звать нас не флудом.
+    // Пришло не флудом — путь ему уже известен, и хватит голого подтверждения.
+    uint8_t frame[GROUP_TEXT_MAX + 32];
     int f = 0;
-    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ACK << 2) | ROUTE_TYPE_FLOOD);
-    frame[f++] = PATH_LEN_INIT;          // путь достроят ретрансляторы
-    memcpy(frame + f, ack, sizeof(ack)); f += sizeof(ack);
+    if (viaFlood) {
+        f = buildPathReturnFrame(srcHash, peerPub, inPathLen, inPath,
+                                 PAYLOAD_TYPE_ACK, ack, (int)sizeof(ack),
+                                 frame, (int)sizeof(frame));
+    }
+    if (f <= 0) {
+        f = 0;
+        frame[f++] = (uint8_t)((PAYLOAD_TYPE_ACK << 2) | ROUTE_TYPE_FLOOD);
+        frame[f++] = PATH_LEN_INIT;      // путь достроят ретрансляторы
+        memcpy(frame + f, ack, sizeof(ack)); f += sizeof(ack);
+    }
 
     // Через очередь с задержкой, а не сразу: отправитель ещё доканчивает свои копии и, пока
     // передаёт, нас не слышит (см. ACK_DELAY_* в config.h).
@@ -203,8 +217,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         return false;
     }
 
-    // GRP_TXT (0x05) — групповые сообщения, TXT_MSG (0x02) — личные (ДМ).
-    if (payload_type != 0x05 && payload_type != 0x02) {
+    // GRP_TXT (0x05) — групповые, TXT_MSG (0x02) — личные, PATH (0x08) — возврат маршрута.
+    // У возврата маршрута конверт тот же, что у лички ([адресат][отправитель][MAC][шифр]),
+    // отличается только содержимое, поэтому он разбирается той же веткой.
+    if (payload_type != 0x05 && payload_type != PAYLOAD_TYPE_TXT_MSG
+        && payload_type != PAYLOAD_TYPE_PATH) {
         // ADVERT (0x04): кэшируем публичные ключи нод — без них не ответить
         // в личку (нужен полный pubkey для X25519). В кадре: [pub 32][ts 4][sig 64][app...].
         if (payload_type == 0x04) {
@@ -275,6 +292,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         replyHops = hop_count;
     }
     #endif
+    // Путь, которым кадр пришёл, нужен дальше целиком: его мы вернём отправителю, чтобы он
+    // узнал дорогу до нас. Берём указатель ДО сдвига смещения — после него путь уже позади.
+    const uint8_t* inPath = &data[offset];
+    const uint8_t inPathLen = path_len;        // байт разметки как пришёл
+
     offset += pathBytes;
 
     if (offset >= len) return false;
@@ -284,7 +306,7 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     uint8_t dmSrc = 0;
     int chIdx = -1;
 
-    if (payload_type == 0x02) {
+    if (payload_type == PAYLOAD_TYPE_TXT_MSG || payload_type == PAYLOAD_TYPE_PATH) {
         // Личное сообщение: payload = [dest_hash 1B][src_hash 1B][MAC 2B][cipher...].
         // Шифруется общим секретом X25519 — текст без ключей ноды не прочитать,
         // но dest_hash (первый байт) показывает, адресовано ли сообщение НАМ.
@@ -342,6 +364,41 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
             if (dmPlainLen > 5) {
                 for (int i = 5; i < dmPlainLen && dmPlain[i]; i++) text += (char)dmPlain[i];
             }
+            // ВОЗВРАТ МАРШРУТА. Конверт тот же, содержимое другое:
+            // [длина пути 1][путь][тип довеска 1][довесок]. Отправитель присылает его,
+            // приняв нашу личку флудом, — так мы узнаём дорогу ДО НЕГО, и именно её
+            // приложение показывает маршрутом. Довеском обычно идёт подтверждение
+            // доставки: оригинал кладёт его сюда, чтобы не слать два пакета.
+            if (payload_type == PAYLOAD_TYPE_PATH) {
+                if (dmPlainLen < 1) {
+                    Serial.println("[PATH] HMAC не совпал или возврат маршрута пуст");
+                } else {
+                    const uint8_t pl = dmPlain[0];
+                    const uint8_t hsize = (pl >> 6) + 1;
+                    const uint8_t hops = pl & 0x3F;
+                    const int pathBytes = (int)hops * hsize;
+                    if (1 + pathBytes > dmPlainLen) {
+                        Serial.printf("[PATH] путь длиннее содержимого (%u хопов по %u Б) — "
+                                      "кадр битый\n", hops, hsize);
+                    } else {
+                        int k = 1 + pathBytes;
+                        const uint8_t extraType = (k < dmPlainLen) ? (dmPlain[k++] & 0x0F) : 0xFF;
+                        const uint8_t* extra = &dmPlain[k];
+                        const int extraLen = dmPlainLen - k;
+                        Serial.printf("[PATH] маршрут до <%02X>: %u хопов по %u Б\n",
+                                      dmSrc, hops, hsize);
+                        mcOnPathRecv(dmSrc, pl, &dmPlain[1], extraType, extra, extraLen);
+                        // Подтверждение приезжает довеском, чтобы не слать второй пакет.
+                        if (extraType == PAYLOAD_TYPE_ACK && extraLen >= 4) {
+                            ackRecvCount++;
+                            mcOnAckRecv(extra);
+                        }
+                    }
+                }
+                lastMessage = "";
+                return false;        // показывать в канале нечего: это служебный кадр
+            }
+
             if (text.length() == 0) {
                 Serial.println("[DM] HMAC не совпал или личное сообщение пустое");
             } else {
@@ -349,7 +406,27 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 // отдаём то, что видно в кадре: короткий хэш. Имя узла приложение знает из
                 // адверта и подставит само по контакту.
                 lastMessage = text;
-                dmAckSend(dmPlain, dmPlainLen, dmPeerPub);
+                dmAckSend(dmPlain, dmPlainLen, dmPeerPub, dmSrc,
+                          route_type == ROUTE_TYPE_FLOOD, inPathLen, inPath);
+                #ifdef COMPANION_NODE
+                // ЛИЧКА УХОДИТ В ПРИЛОЖЕНИЕ КОНТАКТОМ, А НЕ КАНАЛОМ. Раньше она попадала
+                // туда же, куда групповой текст (канал #connections), и приложение не
+                // знало ни отправителя, ни маршрута: показать «маршрут сообщения» ему
+                // неоткуда — в кадре канала нет ключа собеседника. Оригинал отдаёт личку
+                // отдельным кодом с шестибайтовым началом ключа и байтом длины пути.
+                uint32_t dmSenderTs = 0;
+                memcpy(&dmSenderTs, dmPlain, 4);        // часы ОТПРАВИТЕЛЯ, как в оригинале
+                // Тип текста лежит в старших шести битах байта флагов, в младших двух —
+                // номер попытки отправки (оригинал: flags = data[4] >> 2).
+                const uint8_t dmTxtType = dmPlain[4] >> 2;
+                // SNR берём из метрики кадра, а не из lastSNR: тот обновляется ниже по
+                // функции, и здесь в нём ещё лежит качество ПРЕДЫДУЩЕГО пакета.
+                // Для пути, пришедшего не флудом, оригинал шлёт маркер 0xFF: хопов в таком
+                // кадре нет, и показывать в приложении нечего.
+                companionOnDirectText(dmPeerPub, text, meta.snr,
+                                      route_type == ROUTE_TYPE_FLOOD ? path_len : 0xFF,
+                                      dmSenderTs, dmTxtType);
+                #endif
             }
         }
         if (lastMessage.length() == 0) lastMessage = "(личное сообщение)";
@@ -406,7 +483,9 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     // Показываем всё, что пришло в канал, включая служебный обмен узлов (hello, ping,
     // pong, time, ota, cfg): по нему видно жизнь сети, а отличить служебное от беседы
     // можно и по самому тексту.
-    if (chIdx >= 0) {
+    // Личное сообщение уже ушло в приложение отдельным кадром контакта (см. ветку DM
+    // выше): второй раз, да ещё каналом, оно показалось бы дважды и в чужой переписке.
+    if (chIdx >= 0 && !personalDm) {
         // Отправителя приложение достаёт из начала текста ("Имя: сообщение") — так
         // устроен формат группового сообщения в сети. Мы же разбирали строку на имя и
         // текст и отдавали только текст, поэтому в приложении сообщения были безымянными.
