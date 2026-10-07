@@ -157,10 +157,15 @@ void publishMessage();
 bool publishSensorMessage();
 #endif
 
-// ===== КОМПАНЬОН (BLE-приложение) =====
-// Протокол телефонного приложения. Реализует прошивка (companion.cpp); вызовы под
-// #ifdef COMPANION_NODE.
-#ifdef COMPANION_NODE
+// ===== КЛИЕНТСКАЯ ЧАСТЬ: КОМУ ПОКАЗЫВАТЬ ПРИНЯТОЕ =====
+// Ядро принимает и расшифровывает сообщения, но показывать их — не его дело. Эти хуки
+// отдают принятое тому, кто ведёт переписку: у прошивки-компаньона это телефонное
+// приложение по BLE (companion.cpp), у T-Deck — его собственный экран с клавиатурой.
+//
+// Раньше вызовы стояли под #ifdef COMPANION_NODE, то есть принятое доставалось только
+// тому, у кого есть BLE. Но «кому показать» и «как показать» — разные вопросы: ядру
+// довольно того, что получатель есть. Поэтому хуки объявлены всегда, а у кого их нет —
+// работает слабая заглушка.
 void companionOnChannelText(int channelIdx, const String& text, float snr, uint8_t pathLen,
                             uint32_t senderTs, bool notify = true);
 // Личное сообщение приложению отдаётся НЕ как сообщение канала: в оригинале у него свой код
@@ -173,7 +178,6 @@ void companionOnDirectText(const uint8_t* srcPub, const String& text, float snr,
                            uint8_t pathLen, uint32_t senderTs, uint8_t txtType);
 void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
                        uint8_t pathLen, const uint8_t* path);
-#endif
 
 // ===== УЗЕЛ-ПРОШИВАЛЬЩИК (support) =====
 // Сессию mesh OTA вместо координатора может вести отдельный узел-прошивальщик: он

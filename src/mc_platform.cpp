@@ -126,6 +126,26 @@ void mcOnResponseRecv(uint8_t srcHash, const uint8_t* srcPub, const uint8_t* dat
     (void)srcHash; (void)srcPub; (void)data; (void)len;
 }
 
+// ===== КЛИЕНТСКАЯ ЧАСТЬ: КОМУ ПОКАЗЫВАТЬ ПРИНЯТОЕ =====
+// Заглушки для узлов без переписки (датчик, координатор): принятое им показывать некому.
+__attribute__((weak))
+void companionOnChannelText(int channelIdx, const String& text, float snr, uint8_t pathLen,
+                            uint32_t senderTs, bool notify) {
+    (void)channelIdx; (void)text; (void)snr; (void)pathLen; (void)senderTs; (void)notify;
+}
+
+__attribute__((weak))
+void companionOnDirectText(const uint8_t* srcPub, const String& text, float snr,
+                           uint8_t pathLen, uint32_t senderTs, uint8_t txtType) {
+    (void)srcPub; (void)text; (void)snr; (void)pathLen; (void)senderTs; (void)txtType;
+}
+
+__attribute__((weak))
+void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
+                       uint8_t pathLen, const uint8_t* path) {
+    (void)pub; (void)app; (void)applen; (void)pathLen; (void)path;
+}
+
 // ===== СЫРОЙ ЖУРНАЛ ПРИЁМА =====
 __attribute__((weak))
 void mcOnRawRx(const uint8_t* raw, int len, float snr, float rssi) {

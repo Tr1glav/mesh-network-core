@@ -270,11 +270,9 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                     memcpy(&msg[mlen], app, applen); mlen += applen;
                     if (Ed25519::verify(sig, pub, msg, mlen)) {
                         rememberPeerPub(pub[0], pub);
-                        #ifdef COMPANION_NODE
                         // Приложение строит список собеседников из адвертов: без этого
                         // добавить кого-либо в контакты попросту неоткуда.
                         companionOnAdvert(pub, app, applen, pl, advPath);
-                        #endif
                         Serial.printf("[ADV] cached pubkey for <%02X>\n", pub[0]);
                     } else {
                         Serial.printf("[ADV] bad signature for <%02X>\n", pub[0]);
@@ -462,7 +460,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 lastMessage = text;
                 dmAckSend(dmPlain, dmPlainLen, dmPeerPub, dmSrc,
                           route_type == ROUTE_TYPE_FLOOD, inPathLen, inPath);
-                #ifdef COMPANION_NODE
                 // ЛИЧКА УХОДИТ В ПРИЛОЖЕНИЕ КОНТАКТОМ, А НЕ КАНАЛОМ. Раньше она попадала
                 // туда же, куда групповой текст (канал #connections), и приложение не
                 // знало ни отправителя, ни маршрута: показать «маршрут сообщения» ему
@@ -480,7 +477,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                 companionOnDirectText(dmPeerPub, text, meta.snr,
                                       route_type == ROUTE_TYPE_FLOOD ? path_len : 0xFF,
                                       senderTsOrOurs(dmSenderTs), dmTxtType);
-                #endif
             }
         }
         if (lastMessage.length() == 0) lastMessage = "(личное сообщение)";
@@ -552,7 +548,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
     // не обрабатываем собственные сообщения (эхо собственного флуда)
     if (lastSender == cfg.name) return false;
 
-    #ifdef COMPANION_NODE
     // Показываем всё, что пришло в канал, включая служебный обмен узлов (hello, ping,
     // pong, time, ota, cfg): по нему видно жизнь сети, а отличить служебное от беседы
     // можно и по самому тексту.
@@ -571,7 +566,6 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
         companionOnChannelText(chIdx, forApp, lastSNR, appPathLen,
                                senderTsOrOurs(chSenderTs));
     }
-    #endif
 
     Serial.printf("\n=== PACKET #%d (%s) ===\n", packetCount, lastChannelName.c_str());
     Serial.printf("From: %s\n", lastSender.c_str());

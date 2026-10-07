@@ -452,14 +452,12 @@ void sensorSendMsg(const char* msg, unsigned int gapBaseMs, int repeats) {
     if (f <= 0) return;
     floodSend(-1, frame, f, gapBaseMs, repeats);
     Serial.printf("[SNS] sent \"%s\" to sensor channel\n", msg);
-    #ifdef COMPANION_NODE
     // Собственные передачи в приложение иначе не попадают: в очередь кладётся только
     // принятое из эфира, а свой же флуд отбрасывается как эхо. Кладём прямо здесь, с тем
     // же префиксом имени и той же МЕТКОЙ ОТПРАВИТЕЛЯ, с какими сообщение ушло в эфир:
     // приложение сопоставляет очередь с сырым журналом 0x88 именно по этой метке.
     companionOnChannelText(sensorChannelIdx, cfg.name + ": " + msg, 0.0f, PATH_LEN_INIT,
                            senderTs, false);
-    #endif
     #ifdef SENSOR_NODE
     sensorLastSent = msg;
     sensorLastSentMs = millis();
