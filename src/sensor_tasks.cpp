@@ -26,7 +26,10 @@ void sensorTasksTick() {
     // Кадры идут каждые 8 мс, но куда важнее конец сессии: запись во флеш и проверка
     // образа на пониженной частоте — самое подозрительное место, а узел дважды отвергал
     // уже полностью принятый и заведомо исправный образ.
-    bool wantFastCpu = otaFastMode || otaActive;
+    // Плюс просьба прошивки: плате с экраном полная частота нужна, пока на экран смотрят
+    // (см. mcWantFastCpu). Для узла без экрана заглушка возвращает false, и правило
+    // остаётся прежним.
+    bool wantFastCpu = otaFastMode || otaActive || mcWantFastCpu();
     static bool cpuFast = false;
     if (wantFastCpu != cpuFast) {
         cpuFast = wantFastCpu;

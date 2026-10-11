@@ -268,6 +268,11 @@ bool parseMeshCorePacket(uint8_t* data, int len, const MeshRxMeta& meta) {
                     memcpy(&msg[mlen], pub, 32); mlen += 32;
                     memcpy(&msg[mlen], ts, 4); mlen += 4;
                     memcpy(&msg[mlen], app, applen); mlen += applen;
+                    // Сначала предлагаем прошивке сделать это не сейчас: проверка стоит
+                    // десятки миллисекунд, а адверт не срочный (см. mcVerifyAdvertAsync).
+                    // Забрала — выходим, применит сама.
+                    if (mcVerifyAdvertAsync(sig, pub, msg, mlen, app, applen, pl, advPath))
+                        return false;
                     if (Ed25519::verify(sig, pub, msg, mlen)) {
                         rememberPeerPub(pub[0], pub);
                         // Приложение строит список собеседников из адвертов: без этого

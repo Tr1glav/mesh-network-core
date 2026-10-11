@@ -10,21 +10,63 @@
 // Здесь же сброс АРУ по расписанию и разбор сырых кадров быстрого канала во время
 // прошивки по радио — всё, что связано с приёмом, собрано в одном месте.
 
+// ===== Приём: прерывание вместо опроса =====
+//
+// Прежде каждый проход цикла читал у радио регистр прерываний по SPI — 360 раз за пять
+// секунд по 0.6 мс, то есть 207 мс, и 359 раз из 360 ответом было «пакета нет». У платы
+// вывод DIO1 заведён на пин (Module(..., LORA_DIO1, ...)), и радио умеет сказать о приёме
+// само.
+//
+// Но прерывание здесь — только ПОДСКАЗКА, а не единственный источник правды, и это
+// осознанно. Пропущенное прерывание (сброс АРУ, перенастройка после передачи, гонка при
+// очистке флага) означало бы глухоту узла до перезагрузки — цена ошибки несопоставима с
+// экономией. Поэтому регистр всё равно читается, просто редко: раз в RX_POLL_MS. В худшем
+// случае пакет заметят на пятьдесят миллисекунд позже, чем могли бы, а не никогда.
+#define RX_POLL_MS 50
+
+static volatile bool dio1Fired = false;
+
+static void IRAM_ATTR radioDio1Isr() { dio1Fired = true; }
+
+void radioRxAttachIsr() {
+    radio.setDio1Action(radioDio1Isr);
+}
+
 void radioRxTick() {
+    // Замер по частям. Профиль на T-Deck показывает в слоте приёма проходы по 1000-2001 мс,
+    // причём РОВНЫЕ — и только когда по Wi-Fi идёт закачка. Ни одной передачи в это время
+    // нет, значит дело не в эфире. Гадать дороже, чем померить: лог включается только на
+    // медленных тиках и ничего не стоит на обычных.
+    const bool rxDbg = mcDebugLog();
+    const uint32_t rxT0 = rxDbg ? millis() : 0;
+    uint32_t rxTFlags = rxT0, rxTRead = rxT0;
+    bool rxDidRead = false;
     // ===== ПРИЁМ =====
     if (isListening) {
         // Периодический сброс AGC, если не идёт приём пакета прямо сейчас.
         // Не сбрасываем, пока стоит RX_DONE (иначе потеряем пакет).
-        bool rxPending = (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0;
+        // Спрашиваем радио, только если оно позвало или если пришёл срок редкого опроса.
+        static uint32_t lastPollMs = 0;
+        const bool hint = dio1Fired;
+        if (hint) dio1Fired = false;
+        const bool duePoll = (uint32_t)(millis() - lastPollMs) >= RX_POLL_MS;
+        bool rxPending = false;
+        if (hint || duePoll) {
+            lastPollMs = millis();
+            rxPending = (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0;
+        }
         if (!rxPending && (millis() - lastReArmMs > RADIO_REARM_INTERVAL_MS)) {
             rearmRadioAGC();
             rxPending = (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE) != 0;
         }
 
+        if (rxDbg) rxTFlags = millis();
         // читать только если радио действительно получило пакет (RX_DONE)
         if (rxPending) {
+            rxDidRead = true;
             uint8_t buffer[256];
             int state = radio.readData(buffer, sizeof(buffer));
+            if (rxDbg) rxTRead = millis();
             if (state == RADIOLIB_ERR_NONE) {
                 int pktLen = radio.getPacketLength();
                 float rssi = radio.getRSSI();
@@ -144,4 +186,11 @@ void radioRxTick() {
             }
         }
     }
+    const uint32_t rxMs = rxDbg ? millis() - rxT0 : 0;
+    if (rxDbg && rxMs >= 200)
+        Serial.printf("[RX] тик %lu мс: флаги %lu, чтение %lu, разбор %lu%s\n",
+                      (unsigned long)rxMs, (unsigned long)(rxTFlags - rxT0),
+                      (unsigned long)(rxDidRead ? rxTRead - rxTFlags : 0),
+                      (unsigned long)(rxDidRead ? millis() - rxTRead : 0),
+                      rxDidRead ? "" : " (пакета не было)");
 }

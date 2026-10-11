@@ -1,4 +1,5 @@
 #include "config.h"
+#include "mc_platform.h"   // mcAirPump: чем занять ожидание эфира
 #include "globals.h"
 #include "crypto.h"   // fmtFix: печать чисел без float-printf
 #include "mesh.h"     // meshTxDropQueued: копии флуда не должны уехать после FSK
@@ -50,7 +51,11 @@ static bool waitChannelFree() {
         // столкнутся уже друг с другом.
         const int pauseMs = random(CAD_RETRY_MIN_MS, CAD_RETRY_MAX_MS);
         if ((unsigned long)(millis() - startedMs) + pauseMs >= CAD_WAIT_BUDGET_MS) break;
-        delay(pauseMs);
+        // Пауза — не сон: прошивке с экраном есть чем её занять (mcAirPump). Пустой
+        // delay здесь означал замерший интерфейс на всё ожидание тишины в канале, а это
+        // до полутора секунд.
+        const unsigned long pauseUntil = millis() + (unsigned long)pauseMs;
+        while ((long)(millis() - pauseUntil) < 0) mcAirPump();
     }
     cadGiveUps++;
     Serial.printf("[TX] канал занят дольше %d мс — передаю поверх (всего %lu)\n",
@@ -80,7 +85,26 @@ int txFrame(uint8_t* frame, int f) {
     #if HAS_FEM
     digitalWrite(FEM_TX_PIN, HIGH);
     #endif
-    int st = radio.transmit(frame, f);
+    // Передача НЕ блокирующая. radio.transmit() ждёт конца эфира внутри себя, а эфир у
+    // длинного кадра на медленной скорости — до двух секунд: профиль ловил проходы цикла
+    // по 2141 мс, и на экране это выглядело замиранием всего устройства. Ждём сами и
+    // отдаём ожидание прошивке (mcAirPump): шина радио во время эфира свободна, чип
+    // передаёт из своего буфера, так что рисовать экран в это время можно.
+    int st = radio.startTransmit(frame, f);
+    if (st == RADIOLIB_ERR_NONE) {
+        // Запас к расчётному времени эфира: если прерывание почему-то не придёт, выйдем
+        // сами, а не повиснем здесь навсегда.
+        const unsigned long deadline = millis() + (unsigned long)radioAirtimeMs(f) + 500;
+        for (;;) {
+            if (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_TX_DONE) break;
+            if ((long)(millis() - deadline) >= 0) {
+                Serial.println("[TX] конец эфира не дождались — идём дальше");
+                break;
+            }
+            mcAirPump();
+        }
+        radio.finishTransmit();
+    }
     #if HAS_FEM
     digitalWrite(FEM_TX_PIN, LOW);
     #endif
@@ -182,6 +206,11 @@ void radioSetParams(float freq, float bw, int sf, int cr) {
     radio.setSpreadingFactor(sf);
     radio.setCodingRate(cr);
     lastReArmMs = 0;           // разрешить AGC rearm сразу
+    // Подписываемся на DIO1 ДО старта приёма: радио будет само сообщать о принятом кадре,
+    // и опрашивать регистр прерываний в каждом проходе цикла станет незачем
+    // (radio_rx.cpp). Подписка идёт здесь, а не один раз в initLoRa: перенастройка канала
+    // проходит через эту же функцию, и обработчик должен остаться на месте.
+    radioRxAttachIsr();
     radio.startReceive();
     isListening = true;
 }

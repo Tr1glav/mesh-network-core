@@ -3,6 +3,7 @@
 #include "crypto.h"
 #include "radio.h"
 #include "mesh.h"
+#include "mc_platform.h"   // mcOnOwnFrameEcho: эхо своего кадра
 #include <esp_random.h>  // esp_fill_random: запасная личность, если NVS не отвечает
 
 uint8_t* findPeerPub(uint8_t hash) {
@@ -92,6 +93,43 @@ bool meshFrameHashOf(const uint8_t* data, int len, uint8_t out[32]) {
     return meshFrameHash(data, len, NULL, out);
 }
 
+// ===== Эхо своего кадра =====
+//
+// Свой ушедший кадр помечается как виденный, чтобы эхо от ретранслятора не прошло дедуп
+// заново. Но само эхо — ценный сигнал: оно означает, что кадр ПРИНЯЛ и ПЕРЕИЗДАЛ кто-то
+// ещё, то есть сообщение ушло в сеть, а не в пустоту. У лички это видно по
+// подтверждению от получателя, а у канального сообщения подтверждать некому — и до сих
+// пор о его судьбе не было известно ничего.
+//
+// Поэтому запоминаем хэши своих кадров отдельно и ждём их обратно. Таблица короткая:
+// эхо приходит за секунды, и помнить дольше незачем.
+#define OWN_ECHO_COUNT 4
+#define OWN_ECHO_TTL_MS 60000
+
+static uint8_t  ownEchoHash[OWN_ECHO_COUNT][SEEN_HASH_SIZE];
+static uint32_t ownEchoMs[OWN_ECHO_COUNT] = {0};
+static int      ownEchoNext = 0;
+
+static void ownEchoRemember(const uint8_t* hash) {
+    memcpy(ownEchoHash[ownEchoNext], hash, SEEN_HASH_SIZE);
+    ownEchoMs[ownEchoNext] = millis();
+    ownEchoNext = (ownEchoNext + 1) % OWN_ECHO_COUNT;
+}
+
+// Принятый кадр — наше ли это эхо. Возвращает true и гасит запись, чтобы вторая и третья
+// копии флуда не считались вторым подтверждением.
+static bool ownEchoMatch(const uint8_t* hash) {
+    const uint32_t now = millis();
+    for (int i = 0; i < OWN_ECHO_COUNT; i++) {
+        if (!ownEchoMs[i]) continue;
+        if ((uint32_t)(now - ownEchoMs[i]) > OWN_ECHO_TTL_MS) { ownEchoMs[i] = 0; continue; }
+        if (memcmp(ownEchoHash[i], hash, SEEN_HASH_SIZE) != 0) continue;
+        ownEchoMs[i] = 0;
+        return true;
+    }
+    return false;
+}
+
 bool checkAndMarkSeen(uint8_t* data, int len) {
     uint8_t payload_type;
     uint8_t hash_ctx[32];
@@ -101,6 +139,10 @@ bool checkAndMarkSeen(uint8_t* data, int len) {
     int count  = (payload_type == 0x04) ? SEEN_ADVERT_HASH_COUNT : SEEN_HASH_COUNT;
     uint8_t* hashes = (payload_type == 0x04) ? seen_advert_hashes : seen_hashes;
     int* nextIdx    = (payload_type == 0x04) ? &seen_advert_next_idx : &seen_next_idx;
+
+    // Наше собственное эхо: кадр переиздал кто-то ещё, значит он ушёл в сеть. Проверяем
+    // ДО дедупа — дедуп про такой кадр скажет только «уже видел», и этим всё кончится.
+    if (ownEchoMatch(hash_ctx)) mcOnOwnFrameEcho(hash_ctx);
 
     // ищем в кольцевом буфере
     for (int i = 0; i < count; i++) {
@@ -121,6 +163,7 @@ void markOwnFrameSeen(const uint8_t* data, int len) {
     uint8_t payload_type;
     uint8_t hash_ctx[32];
     if (!meshFrameHash(data, len, &payload_type, hash_ctx)) return;
+    ownEchoRemember(hash_ctx);
 
     int count  = (payload_type == 0x04) ? SEEN_ADVERT_HASH_COUNT : SEEN_HASH_COUNT;
     uint8_t* hashes = (payload_type == 0x04) ? seen_advert_hashes : seen_hashes;

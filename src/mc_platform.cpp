@@ -92,6 +92,24 @@ bool mcWifiConnected() {
 __attribute__((weak))
 void mcUiTick() {}
 
+__attribute__((weak))
+void mcAirPump() { delay(1); }
+
+__attribute__((weak))
+bool mcDebugLog() { return true; }
+
+__attribute__((weak))
+bool mcWantFastCpu() { return false; }
+
+__attribute__((weak))
+void mcOnOwnFrameEcho(const uint8_t*) {}
+
+__attribute__((weak))
+bool mcVerifyAdvertAsync(const uint8_t*, const uint8_t*, const uint8_t*, int,
+                         const uint8_t*, int, uint8_t, const uint8_t*) {
+    return false;      // не забрали — ядро проверит на месте
+}
+
 // ===== КНОПКА: ЖЕЛЕЗО =====
 // «Кнопки на этой плате нет» — правильный ответ по умолчанию: ядро тогда не разбирает фронты
 // и не читает уровень несуществующего пина.
