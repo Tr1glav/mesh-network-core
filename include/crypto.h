@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include "ed25519/ed_25519.h"   // Nightcracker ed25519: X25519 key exchange для лички
+#include <mbedtls/md.h>         // sha256Ctx: общий контекст вместо настройки на каждый кадр
 
 float cpuTempC();
 
@@ -26,6 +27,11 @@ int decryptGroupRaw(const uint8_t* secret32, uint8_t* mac, uint8_t* ciphertext, 
 // SHA256 по двум кускам подряд, обрезанный до outLen байт. Копия mesh::Utils::sha256
 // оригинала: подтверждение доставки считается по открытому тексту И публичному ключу
 // отправителя, и склеивать их в один буфер ради хэша незачем.
+// Контекст SHA-256, настроенный ОДИН раз на всю жизнь прошивки. Зачем — см. crypto.cpp:
+// setup делает calloc, а звали его на каждый кадр. nullptr означает, что настроить не
+// удалось; звонящий обязан это проверить, а не считать хэш ненастроенным контекстом.
+mbedtls_md_context_t* sha256Ctx();
+
 void sha256Trunc(uint8_t* out, int outLen, const uint8_t* a, int aLen,
                  const uint8_t* b, int bLen);
 

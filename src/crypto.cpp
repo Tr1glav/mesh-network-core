@@ -8,11 +8,33 @@ float cpuTempC() {
     return temperatureRead() - (float)TEMP_SENSOR_OFFSET;
 }
 
+// ===== CRC по полубайтам =====
+// Таблицы на ШЕСТНАДЦАТЬ записей, а не на 256: 64 и 32 байта флеша против полутора
+// килобайт, а работы вместо восьми сдвигов на байт — две выборки. Разница заметна там,
+// где CRC считается по многу: crc16 на каждый кадр OTA, crc32 — на весь образ целиком,
+// то есть на мегабайт с лишним за сессию.
+//
+// Полиномы и начальные значения прежние (0xEDB88320 отражённый и 0x1021 с 0xFFFF),
+// поэтому в эфире и в файлах не меняется ничего: .otaz, собранные старой прошивкой,
+// читаются новой и наоборот. Совпадение с побитовым вариантом проверено на всех длинах
+// от нуля до 64 КБ и на счёте по кускам (так его и считает OTA).
+static const uint32_t CRC32_NIB[16] = {
+    0x00000000UL, 0x1DB71064UL, 0x3B6E20C8UL, 0x26D930ACUL,
+    0x76DC4190UL, 0x6B6B51F4UL, 0x4DB26158UL, 0x5005713CUL,
+    0xEDB88320UL, 0xF00F9344UL, 0xD6D6A3E8UL, 0xCB61B38CUL,
+    0x9B64C2B0UL, 0x86D3D2D4UL, 0xA00AE278UL, 0xBDBDF21CUL,
+};
+
+static const uint16_t CRC16_NIB[16] = {
+    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7,
+    0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
+};
+
 uint32_t crc32_upd(uint32_t crc, const uint8_t* data, size_t len) {
     for (size_t i = 0; i < len; i++) {
         crc ^= data[i];
-        for (int b = 0; b < 8; b++)
-            crc = (crc >> 1) ^ (0xEDB88320UL & -(crc & 1));
+        crc = (crc >> 4) ^ CRC32_NIB[crc & 0x0F];
+        crc = (crc >> 4) ^ CRC32_NIB[crc & 0x0F];
     }
     return crc;
 }
@@ -20,9 +42,8 @@ uint32_t crc32_upd(uint32_t crc, const uint8_t* data, size_t len) {
 uint16_t crc16buf(const uint8_t* data, size_t len) {
     uint16_t crc = 0xFFFF;
     for (size_t i = 0; i < len; i++) {
-        crc ^= data[i] << 8;
-        for (int b = 0; b < 8; b++)
-            crc = (crc & 0x8000) ? (crc << 1) ^ 0x1021 : (crc << 1);
+        crc = (uint16_t)((crc << 4) ^ CRC16_NIB[((crc >> 12) ^ (data[i] >> 4)) & 0x0F]);
+        crc = (uint16_t)((crc << 4) ^ CRC16_NIB[((crc >> 12) ^ (data[i] & 0x0F)) & 0x0F]);
     }
     return crc;
 }
@@ -80,18 +101,42 @@ int decryptGroupRaw(const uint8_t* secret32, uint8_t* mac, uint8_t* ciphertext, 
     return len;
 }
 
+// ===== Один контекст SHA-256 на всех =====
+// mbedtls_md_setup внутри делает calloc, а md_info_from_type — линейный поиск по списку
+// алгоритмов. И то и другое стояло на самом горячем пути: дедуп-хэш считается на КАЖДЫЙ
+// принятый и каждый отправленный кадр (meshFrameHash), подтверждения доставки — на
+// каждую личку. Это malloc/free в эфирном темпе, то есть и такт процессора, и
+// фрагментация хипа. Возвраты при этом не проверялись: не хватило памяти — контекст
+// остался ненастроенным, а код пошёл дальше.
+//
+// Настраиваем один раз. Цикл однопоточный, приём и передача идут из него же; задача
+// проверки подписи на нулевом ядре сюда не заходит — у Ed25519 свой SHA-512.
+static mbedtls_md_context_t shaCtx;
+static bool shaReady = false;
+
+mbedtls_md_context_t* sha256Ctx() {
+    if (shaReady) return &shaCtx;
+    const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!info) return nullptr;
+    mbedtls_md_init(&shaCtx);
+    if (mbedtls_md_setup(&shaCtx, info, 0) != 0) {
+        mbedtls_md_free(&shaCtx);
+        return nullptr;
+    }
+    shaReady = true;
+    return &shaCtx;
+}
+
 void sha256Trunc(uint8_t* out, int outLen, const uint8_t* a, int aLen,
                  const uint8_t* b, int bLen) {
     if (outLen <= 0 || outLen > 32) return;
+    mbedtls_md_context_t* ctx = sha256Ctx();
+    if (!ctx) { memset(out, 0, outLen); return; }
     uint8_t full[32];
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
-    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
-    mbedtls_md_starts(&ctx);
-    if (a && aLen > 0) mbedtls_md_update(&ctx, a, aLen);
-    if (b && bLen > 0) mbedtls_md_update(&ctx, b, bLen);
-    mbedtls_md_finish(&ctx, full);
-    mbedtls_md_free(&ctx);
+    if (mbedtls_md_starts(ctx) != 0) { memset(out, 0, outLen); return; }
+    if (a && aLen > 0) mbedtls_md_update(ctx, a, aLen);
+    if (b && bLen > 0) mbedtls_md_update(ctx, b, bLen);
+    if (mbedtls_md_finish(ctx, full) != 0) { memset(out, 0, outLen); return; }
     memcpy(out, full, outLen);
 }
 

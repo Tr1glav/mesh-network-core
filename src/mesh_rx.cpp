@@ -4,6 +4,7 @@
 #include <esp_random.h>
 #include "radio.h"
 #include "mesh.h"
+#include "strbuf.h"   // strAppend: позиция, которая не уезжает за буфер
 #include "ota.h"
 
 // ===== Разбор входящего пакета =====
@@ -16,14 +17,15 @@ void buildPingReply(char* out, size_t outlen, const uint8_t* path, uint8_t hop_c
         snprintf(out, outlen, "hops:direct");
         return;
     }
-    size_t pos = snprintf(out, outlen, "hops:%u, route:", hop_count);
+    // Через strAppend, а не «pos += snprintf»: позиция тогда не может уехать за буфер
+    // даже на обрезанном пути (почему это важно — см. strbuf.h).
+    size_t pos = strAppend(out, outlen, 0, "hops:%u, route:", hop_count);
     for (int h = 0; h < hop_count; h++) {
         size_t need = (h > 0 ? 4 : 0) + 2 * path_hash_size + 1;
         if (pos + need > outlen) break;
-        if (h > 0) { out[pos++] = ' '; out[pos++] = 0xE2; out[pos++] = 0x86; out[pos++] = 0x92; }  // " →"
-        for (int b = 0; b < path_hash_size; b++) {
-            pos += snprintf(out + pos, outlen - pos, "%02x", path[h * path_hash_size + b]);
-        }
+        if (h > 0) pos = strAppend(out, outlen, pos, " \xE2\x86\x92");   // " →"
+        for (int b = 0; b < path_hash_size; b++)
+            pos = strAppend(out, outlen, pos, "%02x", path[h * path_hash_size + b]);
     }
 }
 

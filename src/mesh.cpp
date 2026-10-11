@@ -76,14 +76,14 @@ static bool meshFrameHash(const uint8_t* data, int len, uint8_t* payload_type, u
     offset += hop_count * hash_size;
     if (offset >= len) return false;
 
-    mbedtls_md_context_t ctx;
-    mbedtls_md_init(&ctx);
-    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0);
-    mbedtls_md_starts(&ctx);
-    mbedtls_md_update(&ctx, &pt, 1);
-    mbedtls_md_update(&ctx, &data[offset], len - offset);
-    mbedtls_md_finish(&ctx, out);
-    mbedtls_md_free(&ctx);
+    // Контекст общий и настроен один раз: setup делает calloc, а эта функция зовётся на
+    // КАЖДЫЙ принятый и каждый отправленный кадр (см. sha256Ctx в crypto.cpp).
+    mbedtls_md_context_t* ctx = sha256Ctx();
+    if (!ctx) return false;
+    if (mbedtls_md_starts(ctx) != 0) return false;
+    mbedtls_md_update(ctx, &pt, 1);
+    mbedtls_md_update(ctx, &data[offset], len - offset);
+    if (mbedtls_md_finish(ctx, out) != 0) return false;
 
     if (payload_type) *payload_type = pt;
     return true;
