@@ -67,9 +67,69 @@ static void otaSlowDraw() {
 }
 bool otaSlowFinishedOk = false; // итог последней медленной сессии — только для страницы
 
-// Чанк по номеру: читаем из /ota.bin (это .otaz — заголовок плюс сжатый поток) и шлём как
-// есть. Узел разворачивает поток тем же распаковщиком, что и в быстром режиме, поэтому
-// здесь важно лишь резать ровно по OTA_SLOW_CHUNK_BYTES и не терять хвост.
+static void otaSlowSrcClose();
+
+// ===== ОТКУДА БЕРЁТСЯ ОТПРАВЛЯЕМОЕ =====
+// Протокол симметричен по построению: у принятого потока есть приёмник (otaSink* в
+// ota_receiver.cpp, дальше хуки mcOtaData*), у отправляемого — источник, и это он.
+//
+// Сейчас источник один: файл в LittleFS ведущего. Так и должно быть, пока данные идут от
+// ведущего к узлу. Но вынесен он отдельно нарочно — обратное направление (узел отдаёт
+// ведущему журнал, трек, собранное) отличается от прямого ровно источником: у узла груз
+// лежит на его карте, и достать его может только прошивка платы. Когда такое направление
+// появится, подключать его придётся здесь, тремя функциями, а не правкой otaSlowStart.
+//
+// Хуков платформы для источника тут нет намеренно. В mc_platform.h про это сказано прямо:
+// хук «на случай, если понадобится» стоит ровно столько же обязательств, сколько
+// настоящий, — и mcLocalIp оттуда удалили именно за это. Шов заложен, мёртвый контракт нет.
+
+// Открыть груз вида kind и забрать из его заголовка то, что уедет в объявление сессии.
+// Заголовок у .otaz и .tapp одинаков — [МАГИЯ 4][размер 4 LE][CRC32 4 LE][zlib], — и это не
+// совпадение: сделано затем, чтобы узел разворачивал поток тем же tinfl из ПЗУ. Поэтому
+// размер и CRC берутся ИЗ ГРУЗА, а не из прошивочных глобалов: протоколу безразлично, что
+// он везёт.
+static bool otaSlowSrcOpen(OtaKind kind, uint32_t *total, uint32_t *crc, uint32_t *zsize) {
+    // Пути выбирает ядро по виду груза, а не зовущий: «протокол передачи данных» не
+    // означает «пришлите любой файл с диска».
+    const char *srcPath = (kind == OTA_KIND_PACKAGE) ? OTA_SLOW_APP_FILE : "/ota.bin";
+    const char *wantMagic = (kind == OTA_KIND_PACKAGE) ? TDECK_TAPP_MAGIC_WIRE : OTA_Z_MAGIC;
+    otaSlowFile = LittleFS.open(srcPath, "r");
+    if (!otaSlowFile) {
+        snprintf(otaLastErr, sizeof(otaLastErr), "нет груза: %s", srcPath);
+        return false;
+    }
+    uint8_t hdr[OTA_Z_HDR];
+    if (otaSlowFile.size() <= OTA_Z_HDR || otaSlowFile.read(hdr, OTA_Z_HDR) != OTA_Z_HDR) {
+        otaSlowSrcClose();
+        snprintf(otaLastErr, sizeof(otaLastErr), "груз короче заголовка: %s", srcPath);
+        return false;
+    }
+    if (memcmp(hdr, wantMagic, 4) != 0) {
+        otaSlowSrcClose();
+        snprintf(otaLastErr, sizeof(otaLastErr), "в %s не %s", srcPath, wantMagic);
+        return false;
+    }
+    *total = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) | ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
+    *crc = (uint32_t)hdr[8] | ((uint32_t)hdr[9] << 8) | ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24);
+    if (*total == 0 || *total > OTA_MAX_FW_BYTES) {
+        otaSlowSrcClose();
+        snprintf(otaLastErr, sizeof(otaLastErr), "в заголовке %s размер %u", srcPath, (unsigned)*total);
+        return false;
+    }
+    *zsize = (uint32_t)otaSlowFile.size() - OTA_Z_HDR;
+    return true;
+}
+
+// Чанк по номеру: берём из груза сжатый поток как есть. Узел разворачивает его тем же
+// распаковщиком, что и в быстром режиме, поэтому здесь важно лишь резать ровно по
+// OTA_SLOW_CHUNK_BYTES и не терять хвост.
+static void otaSlowSrcClose() {
+    if (otaSlowFile) {
+        otaSlowFile.close();
+        otaSlowFile = File();
+    }
+}
+
 static int otaSlowReadChunk(uint32_t seq, uint8_t *out) {
     if (!otaSlowFile)
         return -1;
@@ -83,10 +143,7 @@ void otaSlowAbort(const char *why) {
     if (!otaSlowOn)
         return;
     otaSlowOn = false;
-    if (otaSlowFile) {
-        otaSlowFile.close();
-        otaSlowFile = File();
-    }
+    otaSlowSrcClose();
     snprintf(otaLastErr, sizeof(otaLastErr), "медленный режим: %s", why);
     mcUiOtaAbort(why);
     slog("[SLOW] прервано: %s\n", why);
@@ -101,30 +158,32 @@ void otaSlowAbort(const char *why) {
 // слал бы вторую и третью копию (1–2.3 с на копию, до 4.6 с на весь флуд), его
 // подтверждение падало бы в занятый эфир. Маятник «в канале говорит только один» ломался
 // ровно на старте сессии.
+// Что везёт ЭТА сессия. Отдельная переменная, а не аргумент на каждый вызов: объявление
+// повторяется, пока узел не отозвался, и вид обязан повторяться тем же.
+static OtaKind otaSlowKindTx = OTA_KIND_FIRMWARE;
+
 static void otaSlowSendStart() {
     char msg[96];
-    snprintf(msg, sizeof(msg), "%s%s:%u:%08X:%u", OTA_SLOW_MSG_START, otaSlowTarget.c_str(), (unsigned)otaSlowTotal,
-             (unsigned)otaSlowCrc, (unsigned)otaSlowChunks);
+    snprintf(msg, sizeof(msg), "%s%s:%s:%u:%08X:%u", OTA_SLOW_MSG_START, otaSlowTarget.c_str(),
+             otaKindWire(otaSlowKindTx), (unsigned)otaSlowTotal, (unsigned)otaSlowCrc, (unsigned)otaSlowChunks);
     sensorSendMsg(msg, 0, 1);
-    slog("[SLOW] старт -> '%s': %u байт, %u чанков по %d\n", otaSlowTarget.c_str(), (unsigned)otaSlowTotal,
-         (unsigned)otaSlowChunks, (int)OTA_SLOW_CHUNK_BYTES);
+    slog("[SLOW] старт -> '%s': %s, %u байт, %u чанков по %d\n", otaSlowTarget.c_str(), otaKindWire(otaSlowKindTx),
+         (unsigned)otaSlowTotal, (unsigned)otaSlowChunks, (int)OTA_SLOW_CHUNK_BYTES);
 }
 
-bool otaSlowStart(const String &target) {
+bool otaSlowStart(const String &target, OtaKind kind) {
     if (otaAnySessionActive())
         return false; // и быстрая, и уже идущая медленная
     if (sensorChannelIdx < 0) {
         strlcpy(otaLastErr, "канал сенсоров не настроен", sizeof(otaLastErr));
         return false;
     }
-    otaSlowFile = LittleFS.open("/ota.bin", "r");
-    if (!otaSlowFile) {
-        strlcpy(otaLastErr, "нет образа для медленной прошивки", sizeof(otaLastErr));
+    // Груз берётся у источника: что это и где лежит, знает он один (см. otaSlowSrcOpen).
+    // Здесь остаётся только протокол — размер, CRC и нарезка на чанки.
+    uint32_t declared = 0, declaredCrc = 0, zsize = 0;
+    if (!otaSlowSrcOpen(kind, &declared, &declaredCrc, &zsize))
         return false;
-    }
-    // В файле лежит .otaz: заголовок OTA_Z_HDR, дальше сжатый поток. Едет поток, размер и
-    // CRC распакованного образа берутся из заголовка — узел проверит ими то, что собрал.
-    const uint32_t zsize = (uint32_t)otaSlowFile.size() - OTA_Z_HDR;
+    otaSlowKindTx = kind;
     otaSlowTarget = target;
     // Узлу объявляется размер РАСПАКОВАННОГО образа (otaImgSize), а не длина сжатого потока
     // (otaFwSize). Здесь стоял otaFwSize, и медленная прошивка не могла завершиться ни при
@@ -132,8 +191,8 @@ bool otaSlowStart(const String &target) {
     // нему распакованный поток, длина сходилась ровно, а CRC32 считается по полному образу и
     // не совпадал никогда. Сколько байт уедет в эфир, узлу говорит otaSlowChunks ниже —
     // размер в этом поле нужен ему для Update.begin() и для проверки того, что он собрал.
-    otaSlowTotal = otaImgSize;
-    otaSlowCrc = otaFwCrc;
+    otaSlowTotal = declared;
+    otaSlowCrc = declaredCrc;
     otaSlowChunks = (zsize + OTA_SLOW_CHUNK_BYTES - 1) / OTA_SLOW_CHUNK_BYTES;
     otaSlowSeq = 0;
     otaSlowSent = 0;
@@ -363,6 +422,11 @@ uint32_t otaSlowRxChunksTotal() {
 #if FEATURE_MESH_OTA_RECEIVER
 
 static unsigned long slowRxLastMs = 0; // когда пришёл последний
+// Что везёт ПРИНИМАЕМАЯ сессия (у отправителя есть свой otaSlowKindTx). Без этой
+// переменной повтор объявления с ДРУГИМ видом груза считался бы тем же самым: размер, CRC
+// и число чанков совпасть могут, а груз при этом другой — и поток поехал бы не туда, куда
+// начинали принимать.
+static OtaKind otaSlowKindRx = OTA_KIND_FIRMWARE;
 static bool slowRxOn = false;
 static unsigned long slowRxAckDueMs = 0; // когда отправить отложенное подтверждение
 
@@ -409,15 +473,26 @@ void otaSlowRxAbort(const char *why) {
 
 // "ota:slow:<target>:<байт>:<crc32>:<чанков>"
 void otaSlowRxStart(const String &args) {
+    // <цель>:<вид>:<байт>:<crc32>:<чанков>
     int p1 = args.indexOf(':');
-    int p2 = (p1 < 0) ? -1 : args.indexOf(':', p1 + 1);
+    int pk = (p1 < 0) ? -1 : args.indexOf(':', p1 + 1);
+    int p2 = (pk < 0) ? -1 : args.indexOf(':', pk + 1);
     int p3 = (p2 < 0) ? -1 : args.indexOf(':', p2 + 1);
     if (p3 < 0)
         return;
     if (args.substring(0, p1) != cfg.name)
         return; // не нам
 
-    const uint32_t total = (uint32_t)strtoul(args.substring(p1 + 1, p2).c_str(), NULL, 10);
+    OtaKind kind;
+    const String kindWord = args.substring(p1 + 1, pk);
+    if (!otaKindFromWire(kindWord.c_str(), &kind)) {
+        // Отказ, а не «считаем прошивкой»: неизвестный вид груза означает, что ведущий
+        // новее нас, и принимать неизвестно что в раздел прошивки нельзя.
+        Serial.printf("[SLOW] отказ: неизвестный вид груза «%s»\n", kindWord.c_str());
+        return;
+    }
+
+    const uint32_t total = (uint32_t)strtoul(args.substring(pk + 1, p2).c_str(), NULL, 10);
     const uint32_t crc = (uint32_t)strtoul(args.substring(p2 + 1, p3).c_str(), NULL, 16);
     const uint32_t chunks = (uint32_t)strtoul(args.substring(p3 + 1).c_str(), NULL, 10);
     if (total == 0 || chunks == 0)
@@ -438,7 +513,7 @@ void otaSlowRxStart(const String &args) {
     // Отсюда же берётся продолжение сессии после перезагрузки ВЕДУЩЕГО: он объявляет тот же
     // образ заново, мы называем свой номер чанка, и окно прыгает туда, а не в ноль.
     if (slowRxOn) {
-        if (total == otaSlowTotal && crc == otaSlowCrc && chunks == otaSlowChunks) {
+        if (total == otaSlowTotal && crc == otaSlowCrc && chunks == otaSlowChunks && kind == otaSlowKindRx) {
             slowRxLastMs = millis();
             slowRxAckLater();
             Serial.printf("[SLOW] повтор объявления: продолжаем с чанка %u\n", (unsigned)slowRxExpect);
@@ -455,9 +530,12 @@ void otaSlowRxStart(const String &args) {
     otaSlowTotal = total;
     otaSlowCrc = crc;
     otaSlowChunks = chunks;
+    otaSlowKindRx = kind;
 
-    if (!otaSlowStreamBegin(otaSlowTotal, otaSlowCrc)) {
-        otaSlowRxAbort("no RAM");
+    if (!otaSlowStreamBegin(otaSlowTotal, otaSlowCrc, kind)) {
+        // Для пакета это ещё и «некуда положить» (нет карты): заглушка mcOtaDataBegin
+        // отвечает false, и сессия честно не начинается.
+        otaSlowRxAbort("не начать приём");
         return;
     }
     slowRxExpect = 0;
@@ -541,6 +619,12 @@ void otaSlowRxData(const String &args) {
         char msg[64];
         snprintf(msg, sizeof(msg), "%s%s", OTA_SLOW_MSG_DONE, cfg.name.c_str());
         sensorSendMsg(msg);
+        if (!otaSlowStreamNeedsReboot()) {
+            // Пакет уже установлен. Перезагрузка оборвала бы связь на полминуты ни за что,
+            // и узел остаётся в сети — ровно затем медленный режим и выбран для пакетов.
+            Serial.printf("[SLOW] груз принят, проверен и применён\n");
+            return;
+        }
         Serial.printf("[SLOW] образ принят и проверен — применяю\n");
         delay(400); // дать сообщению уйти в эфир до перезагрузки
         ESP.restart();

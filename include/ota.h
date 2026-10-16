@@ -23,6 +23,21 @@ void fwScanFeed(FwScan *s, const uint8_t *data, size_t n);
 int fwScanVerdict(const FwScan *s);
 // Раздающая сторона прошивки и страница. Объявления вместе: у координатора и прошивальщика
 // есть и то, и другое, а лишнее объявление без определения никому не мешает.
+// ===== ВИД ГРУЗА =====
+// Mesh OTA — доставка ДАННЫХ: протокол везёт N байт с CRC до узла, медленно или быстро, а
+// что с ними делать, решает приёмная сторона. Прошивка идёт в раздел через Update, пакет
+// приложения — в прошивку платы через хуки mcOtaData*. Ядро про файловые системы не знает,
+// и место назначения выбирает приёмник, а не отправитель (см. OTA_KIND_*_WIRE в config.h).
+enum OtaKind : uint8_t {
+    OTA_KIND_FIRMWARE = 0, // образ .otaz в раздел прошивки, в конце — перезагрузка
+    OTA_KIND_PACKAGE = 1,  // пакет .tapp; ставит прошивка платы, перезагрузки нет
+};
+
+// Слово вида для эфира и разбор обратно. В одном месте, потому что его пишет отправитель
+// (быстрый и медленный — два разных файла), а читает приёмник, и разъехаться им нельзя.
+const char *otaKindWire(OtaKind kind);
+bool otaKindFromWire(const char *word, OtaKind *out);
+
 #if FEATURE_MESH_OTA_SENDER || FEATURE_WEB
 void logGetSnapshot(String &tailOut, uint32_t &totalOut);
 void otaTxGroup(const String &msg);
@@ -33,10 +48,13 @@ void otaSendEnd();
 void otaHandleAck();
 void otaBotTick();
 void otaInspectStoredFw();
+
 // Идёт сессия быстрого режима. Нужно только там, где важна именно его машина состояний.
 bool otaSessionActive();
 
-// Запуск прошивки сенсора без участия веб-запроса — нужен автообновлению
+// Запуск прошивки сенсора без участия веб-запроса — нужен автообновлению.
+// Быстрый режим возит ТОЛЬКО прошивку: в нём узел глух ко всему остальному, и платить
+// этим за пакет в десятки килобайт незачем — для пакетов есть медленный режим.
 bool otaStartSession(const String &target);
 // Достижим ли узел для сессии по радио при таком числе хопов (0xFF — ни разу не слышали).
 // Правило живёт здесь одной функцией: его спрашивают и запуск сессии, и сторона
@@ -72,9 +90,10 @@ extern uint32_t otaImgSize;
 // Начать медленную сессию: образ едет обычными сообщениями канала и доходит туда же, куда
 // доходит любое сообщение сети, — в отличие от быстрого режима, ограниченного прямой
 // слышимостью. Платой становится время.
-bool otaSlowStart(const String &target);
+// kind — что везём. По умолчанию прошивка: так пишут все прежние вызовы.
+bool otaSlowStart(const String &target, OtaKind kind = OTA_KIND_FIRMWARE);
 // Запустить медленный режим независимо от хопов — для проверки самого режима.
-bool otaStartSessionSlow(const String &target);
+bool otaStartSessionSlow(const String &target, OtaKind kind = OTA_KIND_FIRMWARE);
 void otaSlowTick();               // шаг отправителя, из главного цикла
 void otaSlowOnAck(uint32_t next); // подтверждение узла: «жду чанк N»
 void otaSlowOnHello();            // heartbeat из канала: запомнить версию цели
@@ -83,14 +102,17 @@ extern bool otaSlowFinishedOk; // итог последней медленной
 void otaSlowAbort(const char *why);
 #endif
 #if FEATURE_MESH_OTA_RECEIVER
-void otaSlowRxStart(const String &args); // "ota:slow:<цель>:<байт>:<crc>:<чанков>"
+void otaSlowRxStart(const String &args); // "ota:slow:<цель>:<вид>:<байт>:<crc>:<чанков>"
 void otaSlowRxData(const String &args);  // "osd:<seq>:<base64>"
 void otaSlowRxTick();                    // сторож тишины в канале
 void otaSlowRxAbort(const char *why);
 // Обёртки над потоком быстрого режима: распаковка, запись и проверка у них общие.
-bool otaSlowStreamBegin(uint32_t total, uint32_t crc);
+bool otaSlowStreamBegin(uint32_t total, uint32_t crc, OtaKind kind = OTA_KIND_FIRMWARE);
 bool otaSlowStreamFeed(const uint8_t *data, size_t n, bool last);
 bool otaSlowStreamEnd(bool apply);
+// Нужна ли перезагрузка после успешного применения. Прошивке — да, пакету — нет:
+// он уже установлен, а перезагрузка оборвала бы связь ни за что.
+bool otaSlowStreamNeedsReboot();
 #endif
 
 // Для экрана принимающего узла: «получено N чанков из M». Знаменатель и единицу знает только

@@ -42,6 +42,23 @@ void mcUiOtaAbort(const char *why);
 void mcUiOtaProgress(const String &target, uint32_t pct, uint32_t pkts, float rssi, float snr);
 void mcUiOtaDone(const String &target);
 
+// ===== ПРИЁМ ДАННЫХ ПО ЭФИРУ (не прошивки) =====
+// Mesh OTA везёт N байт с CRC; прошивку ядро кладёт в раздел само, а всё прочее отдаёт
+// сюда — куда именно, знает только прошивка платы (карта памяти, разделы, установка
+// приложения). Ядро про файловые системы не знает и знать не должно.
+//
+// Имени груза здесь нет намеренно: по эфиру приходит только «это пакет», а имя лежит
+// внутри самого пакета. Значит место назначения выбирает приёмник, и отправитель не может
+// записать файл куда ему вздумается.
+//
+// Заглушки отвечают false, то есть «мне это некуда положить»: сессия честно отказывается
+// вместо того, чтобы принять десятки килобайт и выбросить. Плата без карты так и должна
+// себя вести.
+bool mcOtaDataBegin(uint32_t total);
+bool mcOtaDataWrite(const uint8_t *data, size_t n);
+bool mcOtaDataApply(); // поток принят целиком и сверен по CRC: применить (установить)
+void mcOtaDataAbort();
+
 // Mesh OTA, принимающая сторона (узел).
 void mcUiOtaSensorProgress(uint32_t got, uint32_t total, uint32_t pkts, float rssi, float snr);
 void mcUiOtaSensorAbort(const char *why, uint32_t rxFrames, uint32_t rxErr);

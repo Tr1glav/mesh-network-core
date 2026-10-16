@@ -31,6 +31,24 @@ __attribute__((weak)) void mcUiSetBrightness(uint8_t bri) {
     (void)bri;
 }
 
+__attribute__((weak)) bool mcOtaDataBegin(uint32_t total) {
+    (void)total;
+    return false; // некуда положить — сессия откажется, и это честнее приёма в никуда
+}
+
+__attribute__((weak)) bool mcOtaDataWrite(const uint8_t *data, size_t n) {
+    (void)data;
+    (void)n;
+    return false;
+}
+
+__attribute__((weak)) bool mcOtaDataApply() {
+    return false;
+}
+
+__attribute__((weak)) void mcOtaDataAbort() {
+}
+
 __attribute__((weak)) bool mcUiAutoBrightnessEnabled() {
     return false;
 }

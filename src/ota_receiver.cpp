@@ -33,18 +33,92 @@ static void otaZFree() {
     otaDict = NULL;
 }
 
+// ===== КУДА УХОДИТ ПРИНЯТЫЙ ПОТОК =====
+// Mesh OTA доставляет N байт с CRC; смысла этих байт протокол не касается — окна,
+// подтверждения, повторы, разжатие на лету и бюджеты эфира одинаковы для любого груза.
+// Различается только место назначения, и оно выбирается здесь, по виду груза из
+// объявления сессии:
+//
+//   прошивка — раздел через Update, маркер платы, в конце перезагрузка;
+//   прочее   — прошивке платы через хуки mcOtaData* (ядро про файловые системы не знает).
+//
+// Вид приходит из эфира, а место назначения — нет: отправитель говорит «это пакет», куда
+// его класть, решает приёмник. Иначе вышел бы примитив удалённой записи в файловую систему.
+static OtaKind otaKind = OTA_KIND_FIRMWARE;
+
+static bool otaSinkBegin(uint32_t total) {
+    if (otaKind == OTA_KIND_FIRMWARE) {
+        fwScanReset(&otaImgScan); // маркер платы ищется по ходу записи, см. otaSinkWrite
+        if (!Update.begin(total)) {
+            Update.printError(Serial);
+            return false;
+        }
+        return true;
+    }
+    return mcOtaDataBegin(total);
+}
+
+static bool otaSinkWrite(const uint8_t *data, size_t n) {
+    if (otaKind == OTA_KIND_FIRMWARE) {
+        if (Update.write((uint8_t *)data, n) != n) {
+            Update.printError(Serial);
+            return false;
+        }
+        // Маркер платы — свойство прошивки: у пакета его нет и быть не должно, поэтому
+        // сканер живёт здесь, а не в общем пути приёма.
+        fwScanFeed(&otaImgScan, data, n);
+        return true;
+    }
+    return mcOtaDataWrite(data, n);
+}
+
+// Поток принят целиком и сошёлся по CRC — применить. why заполняется причиной отказа:
+// её узел называет ведущему, иначе тот видит только таймаут.
+static bool otaSinkApply(const char **why) {
+    if (otaKind == OTA_KIND_FIRMWARE) {
+        // Прошивка другой платы не стартует, и узел придётся снимать и шить по USB.
+        if (fwScanVerdict(&otaImgScan) < 0) {
+            Serial.printf("[OTA] образ платы %s, а это " BOARD_CODE " — отказ\n", otaImgScan.other);
+            *why = "board mismatch";
+            return false;
+        }
+        if (!Update.end(true)) {
+            Update.printError(Serial);
+            *why = "end fail";
+            return false;
+        }
+        return true;
+    }
+    if (!mcOtaDataApply()) {
+        *why = "install fail";
+        return false;
+    }
+    return true;
+}
+
+static void otaSinkAbort() {
+    if (otaKind == OTA_KIND_FIRMWARE) {
+        Update.abort();
+    } else {
+        mcOtaDataAbort();
+    }
+}
+
+// Нужна ли перезагрузка после успеха. Прошивка — да, иначе она не вступит в силу; пакет —
+// нет: он уже установлен, а перезагрузка ради него оборвала бы связь на полминуты.
+static bool otaKindNeedsReboot() {
+    return otaKind == OTA_KIND_FIRMWARE;
+}
+
 static bool otaWriteImage(const uint8_t *data, size_t n) {
     // Распаковщик может выдать больше объявленного: в конце потока он дополняет
-    // последний блок. Лишнее в раздел не пишем, иначе Update.write упрётся в границу.
+    // последний блок. Лишнее не пишем — у прошивки Update.write упрётся в границу раздела.
     if (otaGot + n > otaTotal)
         n = otaTotal - otaGot;
     if (n == 0)
         return true;
-    if (Update.write((uint8_t *)data, n) != n) {
-        Update.printError(Serial);
+    if (!otaSinkWrite(data, n))
         return false;
-    }
-    fwScanFeed(&otaImgScan, data, n);
     otaCrcAcc = crc32_upd(otaCrcAcc, data, n);
     otaGot += n;
     return true;
@@ -203,22 +277,23 @@ void otaHandleRawSensor(const uint8_t *buf, int len) {
             otaRawFail("crc mismatch");
             return;
         }
-        // прошивка другой платы не стартует, и сенсор придётся снимать и шить по USB
-        if (fwScanVerdict(&otaImgScan) < 0) {
-            Serial.printf("[OTA] образ платы %s, а это " BOARD_CODE " — отказ\n", otaImgScan.other);
-            otaRawFail("board mismatch");
-            return;
-        }
-        if (!Update.end(true)) {
-            Update.printError(Serial);
-            otaRawFail("end fail");
+        const char *why = "apply fail";
+        if (!otaSinkApply(&why)) {
+            otaRawFail(why);
             return;
         }
         otaActive = false;
         otaGotStart = false;
-        Serial.println("[OTA] raw DONE, rebooting...");
         uint8_t f[16];
         rawTxFrame(f, rawBuildFrame(f, RAW_TYPE_DONE_ACK, 0, NULL, 0));
+        if (!otaKindNeedsReboot()) {
+            // Пакет уже установлен. Перезагружаться ради него незачем, а связь обрывать
+            // тем более: узел остаётся в сети и продолжает слушать эфир.
+            Serial.println("[OTA] raw DONE: груз принят и применён");
+            otaZFree();
+            return;
+        }
+        Serial.println("[OTA] raw DONE, rebooting...");
         delay(300);
         ESP.restart();
     }
@@ -248,7 +323,7 @@ void otaSensorAbort(const char *why) {
         snprintf(msg, sizeof(msg), "ota:fail:%s", why);
         sensorSendMsg(msg);
     }
-    Update.abort();
+    otaSinkAbort();
     otaZFree();
     otaWinMask = 0;
     otaActive = false;
@@ -296,7 +371,7 @@ void otaSensorHandle() {
     }
 
     if (m.startsWith("ota:start:")) {
-        // ota:start:<target>:<размер образа>:<crc32hex>:z<размер сжатого потока>
+        // ota:start:<target>:<вид>:<размер образа>:<crc32hex>:z<размер сжатого потока>
         String rest = m.substring(10);
         int p = rest.indexOf(':');
         if (p <= 0)
@@ -304,6 +379,26 @@ void otaSensorHandle() {
         String target = rest.substring(0, p);
         if (target != cfg.name)
             return;
+        // Вид груза. Быстрый режим возит ТОЛЬКО прошивку, и это не упрощение: в нём узел
+        // уходит на FSK и глохнет ко всей остальной сети, а кончается сессия
+        // перезагрузкой. Для прошивки это оправданная плата, для пакета в десятки
+        // килобайт — нет; у пакетов есть медленный режим, где узел остаётся на связи.
+        rest = rest.substring(p + 1);
+        p = rest.indexOf(':');
+        if (p <= 0)
+            return;
+        OtaKind kind;
+        if (!otaKindFromWire(rest.substring(0, p).c_str(), &kind)) {
+            Serial.printf("[OTA] отказ: неизвестный вид груза «%s»\n", rest.substring(0, p).c_str());
+            sensorSendMsg("ota:fail:bad kind");
+            return;
+        }
+        if (kind != OTA_KIND_FIRMWARE) {
+            Serial.println("[OTA] отказ: быстрый режим возит только прошивку, пакет — медленным");
+            sensorSendMsg("ota:fail:fast fw only");
+            return;
+        }
+        otaKind = kind;
         // Прошивку принимаем только с канала, ключ которого задан нами, а не выведен из
         // его имени: иначе образ смог бы прислать любой, кто угадал имя канала, — а
         // проверка маркера платы от подделки не спасает, это просто строка в образе.
@@ -325,7 +420,7 @@ void otaSensorHandle() {
             return;
         // прерываем предыдущую сессию, если вдруг была
         if (otaActive && otaGotStart)
-            Update.abort();
+            otaSinkAbort();
         otaTotal = total;
         otaCrcExp = crc;
         otaGot = 0;
@@ -341,7 +436,6 @@ void otaSensorHandle() {
         otaZFree();
         otaStreamLen = zsize;
         otaWinMask = 0;
-        fwScanReset(&otaImgScan);
         otaDictOfs = 0;
         otaInfl = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
         otaDict = (uint8_t *)malloc(TINFL_LZ_DICT_SIZE);
@@ -350,8 +444,7 @@ void otaSensorHandle() {
             return;
         }
         tinfl_init(otaInfl);
-        if (!Update.begin(total)) {
-            Update.printError(Serial);
+        if (!otaSinkBegin(total)) {
             otaSensorAbort("begin fail");
             return;
         }
@@ -381,15 +474,15 @@ void otaSensorHandle() {
 // дважды.
 #if FEATURE_MESH_OTA_RECEIVER
 
-bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
+bool otaSlowStreamBegin(uint32_t total, uint32_t crc, OtaKind kind) {
     if (otaActive)
         return false; // быстрая сессия уже идёт
+    otaKind = kind;   // до otaSinkBegin: он по виду выбирает, куда писать
     otaTotal = total;
     otaCrcExp = crc;
     otaGot = 0;
     otaCrcAcc = 0xFFFFFFFF;
     otaDictOfs = 0;
-    fwScanReset(&otaImgScan);
     otaZFree();
     otaInfl = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
     otaDict = (uint8_t *)malloc(TINFL_LZ_DICT_SIZE);
@@ -398,8 +491,7 @@ bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
         return false;
     }
     tinfl_init(otaInfl);
-    if (!Update.begin(total)) {
-        Update.printError(Serial);
+    if (!otaSinkBegin(total)) {
         otaZFree();
         return false;
     }
@@ -414,8 +506,9 @@ bool otaSlowStreamFeed(const uint8_t *data, size_t n, bool last) {
     return otaFeed(data, n, last);
 }
 
-// true — образ сошёлся по длине, CRC и маркеру платы и записан. Дальше зовущий перезагружает
-// узел; false — всё откатывается, раздел остаётся прежним.
+// true — груз сошёлся по длине и CRC и применён (прошивка записана в раздел, пакет
+// установлен). Перезагружать узел нужно только для прошивки — спрашивайте
+// otaSlowStreamNeedsReboot(); false — всё откатывается, раздел остаётся прежним.
 bool otaSlowStreamEnd(bool apply) {
     bool ok = false;
     if (apply) {
@@ -423,18 +516,23 @@ bool otaSlowStreamEnd(bool apply) {
             Serial.printf("[SLOW] размер не сошёлся: %u из %u\n", (unsigned)otaGot, (unsigned)otaTotal);
         } else if (~otaCrcAcc != otaCrcExp) {
             Serial.printf("[SLOW] CRC не сошёлся\n");
-        } else if (fwScanVerdict(&otaImgScan) < 0) {
-            Serial.printf("[SLOW] образ платы %s, а это " BOARD_CODE "\n", otaImgScan.other);
-        } else if (!Update.end(true)) {
-            Update.printError(Serial);
         } else {
-            ok = true;
+            const char *why = "apply fail";
+            if (otaSinkApply(&why)) {
+                ok = true;
+            } else {
+                Serial.printf("[SLOW] не применилось: %s\n", why);
+            }
         }
     }
-    if (!ok && Update.isRunning())
-        Update.abort();
+    if (!ok)
+        otaSinkAbort();
     otaZFree();
     return ok;
+}
+
+bool otaSlowStreamNeedsReboot() {
+    return otaKindNeedsReboot();
 }
 
 #endif // FEATURE_MESH_OTA_RECEIVER

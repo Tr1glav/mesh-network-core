@@ -8,6 +8,29 @@
 #include <stdio.h>
 #include <esp_system.h>
 
+// ==== ВИД ГРУЗА ====
+// Слово для эфира и разбор обратно. Здесь, а не в двух файлах отправки: пишут его
+// быстрый и медленный режимы по отдельности, читает приёмник, и разъехаться им нельзя.
+const char *otaKindWire(OtaKind kind) {
+    return kind == OTA_KIND_PACKAGE ? OTA_KIND_APP_WIRE : OTA_KIND_FW_WIRE;
+}
+
+bool otaKindFromWire(const char *word, OtaKind *out) {
+    if (!word || !out)
+        return false;
+    if (strcmp(word, OTA_KIND_FW_WIRE) == 0) {
+        *out = OTA_KIND_FIRMWARE;
+        return true;
+    }
+    if (strcmp(word, OTA_KIND_APP_WIRE) == 0) {
+        *out = OTA_KIND_PACKAGE;
+        return true;
+    }
+    // Неизвестное слово — это не «считаем прошивкой». Узел с новым видом груза и старая
+    // прошивка договориться не могут, и честный отказ лучше приёма неизвестно чего.
+    return false;
+}
+
 // ==== ЧИСТЫЙ LoRa OTA: сырые фреймы на быстрой конфигурации (вне meshcore) ====
 
 int rawBuildFrame(uint8_t *frm, uint8_t type, uint32_t seq, const uint8_t *data, int n) {
@@ -218,8 +241,10 @@ void otaDrawProgress() {
 
 void otaSendStart() {
     char msg[96];
-    snprintf(msg, sizeof(msg), "ota:start:%s:%u:%08X:z%u", otaTarget.c_str(), (unsigned)otaImgSize, (unsigned)otaFwCrc,
-             (unsigned)otaFwSize);
+    // Быстрый режим возит только прошивку (см. otaStartSession), но вид в объявлении есть
+    // всё равно: формат один на оба режима, и приёмник не должен угадывать по длине.
+    snprintf(msg, sizeof(msg), "ota:start:%s:%s:%u:%08X:z%u", otaTarget.c_str(), otaKindWire(OTA_KIND_FIRMWARE),
+             (unsigned)otaImgSize, (unsigned)otaFwCrc, (unsigned)otaFwSize);
     slog("[OTA] -> %s: %s\n", otaTarget.c_str(), msg);
     otaTxGroup(msg);
 }
@@ -646,7 +671,7 @@ static bool otaStartRadio(const String &target) {
 // Принудительно медленным режимом: узел может быть слышен напрямую, а проверить дальний
 // путь надо — иначе режим, которым шьют самые труднодоступные узлы, испытывается только
 // тогда, когда что-то сломалось.
-bool otaStartSessionSlow(const String &target) {
+bool otaStartSessionSlow(const String &target, OtaKind kind) {
     if (otaSlowOn) {
         strlcpy(otaLastErr, "медленная сессия уже идёт", sizeof(otaLastErr));
         return false;
@@ -661,7 +686,11 @@ bool otaStartSessionSlow(const String &target) {
         strlcpy(otaLastErr, "канал сенсоров без своего ключа", sizeof(otaLastErr));
         return false;
     }
-    if (!otaFwReady || target.length() == 0 || target.length() > CFG_NAME_MAX)
+    // otaFwReady — про загруженный ОБРАЗ ПРОШИВКИ. Для пакета он не при чём: его груз
+    // лежит в своём файле, и готовность проверяет otaSlowStart, читая заголовок.
+    if (kind == OTA_KIND_FIRMWARE && !otaFwReady)
+        return false;
+    if (target.length() == 0 || target.length() > CFG_NAME_MAX)
         return false;
     otaNote[0] = 0;
     otaDelegate = "";
@@ -680,7 +709,7 @@ bool otaStartSessionSlow(const String &target) {
         slog("[OTA] '%s' передать не удалось, медленный режим ведём сами\n", supports[supIdx].name.c_str());
     }
 
-    if (!otaSlowStart(target))
+    if (!otaSlowStart(target, kind))
         return false;
     snprintf(otaNote, sizeof(otaNote), "%s: медленный режим принудительно", target.c_str());
     return true;
