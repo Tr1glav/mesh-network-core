@@ -1,15 +1,16 @@
 #include "config.h"
 #include "appconfig.h"
-#include "globals.h"   // otaActive: во время прошивки по радио перезагружаться нельзя
-#include "crypto.h"    // fmtFix/parseFixed: печать и разбор чисел без float-printf
+#include "globals.h" // otaActive: во время прошивки по радио перезагружаться нельзя
+#include "crypto.h"  // fmtFix/parseFixed: печать и разбор чисел без float-printf
 #include "mesh.h"
-#include "ota.h"      // otaAnySessionActive: очередь ответа молчит, пока идёт прошивка
+#include "ota.h"         // otaAnySessionActive: очередь ответа молчит, пока идёт прошивка
+#include "mc_platform.h" // mcUiSetBrightness, mcUiAutoBrightness*: панель — дело прошивки платы
 #include <Preferences.h>
-#include <esp_random.h>   // esp_fill_random: seed личности узла
+#include <esp_random.h> // esp_fill_random: seed личности узла
 
 AppConfig cfg;
 
-static const char* NS = "meshcfg";
+static const char *NS = "meshcfg";
 
 // Одна таблица описывает поле сразу для трёх вещей: чтения из NVS, записи и команды "set".
 // Добавить настройку — добавить строку. Значение по умолчанию берётся из макросов
@@ -17,55 +18,58 @@ static const char* NS = "meshcfg";
 enum CfgKind { CFG_STR, CFG_U16, CFG_I16, CFG_FLT };
 
 struct CfgField {
-    const char* cmd;          // имя в консоли, оно же ключ в NVS
+    const char *cmd; // имя в консоли, оно же ключ в NVS
     CfgKind kind;
-    String AppConfig::*s;     // заполнено ровно одно поле в зависимости от kind
+    String AppConfig::*s; // заполнено ровно одно поле в зависимости от kind
     uint16_t AppConfig::*u;
     int16_t AppConfig::*i;
     float AppConfig::*f;
-    bool secret;              // скрывать значение в "show"
-    float def;                // значение по умолчанию для числовых полей
-    float lo, hi;             // допустимый диапазон числового поля: lo==hi — не проверять
-    const char* defStr;       // ...и для строковых
+    bool secret;        // скрывать значение в "show"
+    float def;          // значение по умолчанию для числовых полей
+    float lo, hi;       // допустимый диапазон числового поля: lo==hi — не проверять
+    const char *defStr; // ...и для строковых
 };
 
-#define F_STR(cmd, member, secret, def) \
-    { cmd, CFG_STR, &AppConfig::member, nullptr, nullptr, nullptr, secret, 0, 0, 0, def }
-#define F_U16(cmd, member, def, lo, hi) \
-    { cmd, CFG_U16, nullptr, &AppConfig::member, nullptr, nullptr, false, def, lo, hi, "" }
-#define F_I16(cmd, member, def, lo, hi) \
-    { cmd, CFG_I16, nullptr, nullptr, &AppConfig::member, nullptr, false, def, lo, hi, "" }
-#define F_FLT(cmd, member, def, lo, hi) \
-    { cmd, CFG_FLT, nullptr, nullptr, nullptr, &AppConfig::member, false, def, lo, hi, "" }
+#define F_STR(cmd, member, secret, def)                                                                                \
+    {cmd, CFG_STR, &AppConfig::member, nullptr, nullptr, nullptr, secret, 0, 0, 0, def}
+#define F_U16(cmd, member, def, lo, hi)                                                                                \
+    {cmd, CFG_U16, nullptr, &AppConfig::member, nullptr, nullptr, false, def, lo, hi, ""}
+#define F_I16(cmd, member, def, lo, hi)                                                                                \
+    {cmd, CFG_I16, nullptr, nullptr, &AppConfig::member, nullptr, false, def, lo, hi, ""}
+#define F_FLT(cmd, member, def, lo, hi)                                                                                \
+    {cmd, CFG_FLT, nullptr, nullptr, nullptr, &AppConfig::member, false, def, lo, hi, ""}
 
 static const CfgField FIELDS[] = {
-    F_STR("name",      name,      false, ""),
-    F_STR("wifi_ssid", wifiSsid,  false, ""),
-    F_STR("wifi_pass", wifiPass,  true,  ""),
-    F_STR("mqtt_host", mqttHost,  false, ""),
-    F_U16("mqtt_port", mqttPort,  1883, 1, 65535),
-    F_STR("mqtt_user", mqttUser,  false, ""),
-    F_STR("mqtt_pass", mqttPass,  true,  ""),
-    F_STR("prv_name",  prvName,   false, ""),
-    F_STR("prv_key",   prvKey,    true,  ""),
-    F_STR("sns_name",  snsName,   false, ""),
-    F_STR("sns_key",   snsKey,    true,  ""),
-    F_STR("tx_ch",     txChannel, false, "#connections"),
-    F_STR("coord_ip",  coordHost, false, ""),
-    F_STR("web_pass",  webPass,   true,  ""),
-    F_STR("api_key",   apiKey,    true,  ""),
-    F_FLT("lora_freq", loraFreq,  LORA_FREQ, 400, 1000),
-    F_FLT("lora_bw",   loraBw,    LORA_BW, 7, 500),
-    F_U16("lora_sf",   loraSf,    LORA_SF, 5, 12),
-    F_U16("lora_cr",   loraCr,    LORA_CR, 5, 8),
-    F_I16("lora_tx",   loraTx,    LORA_TX_POWER, -22, 22),
-    F_U16("lora_pre",  loraPre,   LORA_PREAMBLE, 4, 255),
-    F_U16("lora_sync", loraSync,  LORA_SYNC_WORD, 0, 255),
-    F_I16("tz",        tzOffset,  TZ_OFFSET_HOURS, -12, 14),
-    F_U16("disp_bri",  dispBri,   255, 0, 255),
-    F_U16("vext_on",   vextOn,    VEXT_EN_ACTIVE, 0, 1),
-    F_U16("auto_upd",  autoUpd,   1, 0, 1),
-    F_U16("tls_check", tlsCheck,  1, 0, 1),
+    F_STR("name", name, false, ""),
+    F_STR("wifi_ssid", wifiSsid, false, ""),
+    F_STR("wifi_pass", wifiPass, true, ""),
+    F_STR("mqtt_host", mqttHost, false, ""),
+    F_U16("mqtt_port", mqttPort, 1883, 1, 65535),
+    F_STR("mqtt_user", mqttUser, false, ""),
+    F_STR("mqtt_pass", mqttPass, true, ""),
+    F_STR("prv_name", prvName, false, ""),
+    F_STR("prv_key", prvKey, true, ""),
+    F_STR("sns_name", snsName, false, ""),
+    F_STR("sns_key", snsKey, true, ""),
+    F_STR("tx_ch", txChannel, false, "#connections"),
+    F_STR("coord_ip", coordHost, false, ""),
+    F_STR("web_pass", webPass, true, ""),
+    F_STR("api_key", apiKey, true, ""),
+    F_FLT("lora_freq", loraFreq, LORA_FREQ, 400, 1000),
+    F_FLT("lora_bw", loraBw, LORA_BW, 7, 500),
+    F_U16("lora_sf", loraSf, LORA_SF, 5, 12),
+    F_U16("lora_cr", loraCr, LORA_CR, 5, 8),
+    F_I16("lora_tx", loraTx, LORA_TX_POWER, -22, 22),
+    F_U16("lora_pre", loraPre, LORA_PREAMBLE, 4, 255),
+    F_U16("lora_sync", loraSync, LORA_SYNC_WORD, 0, 255),
+    F_I16("tz", tzOffset, TZ_OFFSET_HOURS, -12, 14),
+    F_U16("disp_bri", dispBri, 255, 0, 255),
+    // По умолчанию 0: авто-затемнение — заметная смена поведения экрана, и включать её
+    // молча на уже прошитых узлах (ключа auto_bri в их NVS нет) неправильно.
+    F_U16("auto_bri", autoBri, 0, 0, 1),
+    F_U16("vext_on", vextOn, VEXT_EN_ACTIVE, 0, 1),
+    F_U16("auto_upd", autoUpd, 1, 0, 1),
+    F_U16("tls_check", tlsCheck, 1, 0, 1),
 };
 static const size_t FIELD_COUNT = sizeof(FIELDS) / sizeof(FIELDS[0]);
 
@@ -79,41 +83,62 @@ bool cfgReady() {
 // Вынесено отдельной функцией ещё и затем, чтобы её проверял хостовый тест
 // (scripts/selftest.py).
 bool cfgRangeOk(double v, float lo, float hi) {
-    if (lo == hi) return true;
+    if (lo == hi)
+        return true;
     return v >= (double)lo && v <= (double)hi;
 }
 
-static void cfgSetDefault(const CfgField& fl) {
+static void cfgSetDefault(const CfgField &fl) {
     switch (fl.kind) {
-        case CFG_STR: cfg.*(fl.s) = fl.defStr; break;
-        case CFG_U16: cfg.*(fl.u) = (uint16_t)fl.def; break;
-        case CFG_I16: cfg.*(fl.i) = (int16_t)fl.def; break;
-        case CFG_FLT: cfg.*(fl.f) = fl.def; break;
+        case CFG_STR:
+            cfg.*(fl.s) = fl.defStr;
+            break;
+        case CFG_U16:
+            cfg.*(fl.u) = (uint16_t)fl.def;
+            break;
+        case CFG_I16:
+            cfg.*(fl.i) = (int16_t)fl.def;
+            break;
+        case CFG_FLT:
+            cfg.*(fl.f) = fl.def;
+            break;
     }
 }
 
 bool cfgLoad() {
-    for (size_t i = 0; i < FIELD_COUNT; i++) cfgSetDefault(FIELDS[i]);
+    for (size_t i = 0; i < FIELD_COUNT; i++)
+        cfgSetDefault(FIELDS[i]);
 
     Preferences p;
     // Открываем на запись: при первом запуске это создаёт пространство имён. В режиме
     // только для чтения несуществующее пространство даёт ошибку NOT_FOUND в логе при
     // каждом старте нового устройства, хотя ничего страшного не произошло.
-    if (!p.begin(NS, false)) return false;
+    if (!p.begin(NS, false))
+        return false;
     for (size_t i = 0; i < FIELD_COUNT; i++) {
-        const CfgField& fl = FIELDS[i];
-        if (!p.isKey(fl.cmd)) continue;        // нет в NVS — остаётся значение по умолчанию
+        const CfgField &fl = FIELDS[i];
+        if (!p.isKey(fl.cmd))
+            continue; // нет в NVS — остаётся значение по умолчанию
         switch (fl.kind) {
-            case CFG_STR: cfg.*(fl.s) = p.getString(fl.cmd, fl.defStr); break;
-            case CFG_U16: cfg.*(fl.u) = p.getUShort(fl.cmd, (uint16_t)fl.def); break;
-            case CFG_I16: cfg.*(fl.i) = p.getShort(fl.cmd, (int16_t)fl.def); break;
-            case CFG_FLT: cfg.*(fl.f) = p.getFloat(fl.cmd, fl.def); break;
+            case CFG_STR:
+                cfg.*(fl.s) = p.getString(fl.cmd, fl.defStr);
+                break;
+            case CFG_U16:
+                cfg.*(fl.u) = p.getUShort(fl.cmd, (uint16_t)fl.def);
+                break;
+            case CFG_I16:
+                cfg.*(fl.i) = p.getShort(fl.cmd, (int16_t)fl.def);
+                break;
+            case CFG_FLT:
+                cfg.*(fl.f) = p.getFloat(fl.cmd, fl.def);
+                break;
         }
     }
     p.end();
     // Если в NVS лежало имя длиннее лимита (среди старых версий или от консоли без проверки),
     // обрежем сразу — иначе разные узлы могут совпасть по обрезанной версии.
-    if (cfg.name.length() > CFG_NAME_MAX) cfg.name = cfg.name.substring(0, CFG_NAME_MAX);
+    if (cfg.name.length() > CFG_NAME_MAX)
+        cfg.name = cfg.name.substring(0, CFG_NAME_MAX);
     return cfgReady();
 }
 
@@ -124,12 +149,20 @@ void cfgSave() {
         return;
     }
     for (size_t i = 0; i < FIELD_COUNT; i++) {
-        const CfgField& fl = FIELDS[i];
+        const CfgField &fl = FIELDS[i];
         switch (fl.kind) {
-            case CFG_STR: p.putString(fl.cmd, cfg.*(fl.s)); break;
-            case CFG_U16: p.putUShort(fl.cmd, cfg.*(fl.u)); break;
-            case CFG_I16: p.putShort(fl.cmd, cfg.*(fl.i)); break;
-            case CFG_FLT: p.putFloat(fl.cmd, cfg.*(fl.f)); break;
+            case CFG_STR:
+                p.putString(fl.cmd, cfg.*(fl.s));
+                break;
+            case CFG_U16:
+                p.putUShort(fl.cmd, cfg.*(fl.u));
+                break;
+            case CFG_I16:
+                p.putShort(fl.cmd, cfg.*(fl.i));
+                break;
+            case CFG_FLT:
+                p.putFloat(fl.cmd, cfg.*(fl.f));
+                break;
         }
     }
     p.end();
@@ -138,20 +171,23 @@ void cfgSave() {
 
 // Значение поля строкой — для "show". Секреты заменяются длиной, чтобы их можно было
 // сверить (например скриптом настройки), не раскрывая.
-static String cfgValueStr(const CfgField& fl, bool secrets) {
+static String cfgValueStr(const CfgField &fl, bool secrets) {
     switch (fl.kind) {
         case CFG_STR: {
-            const String& v = cfg.*(fl.s);
+            const String &v = cfg.*(fl.s);
             if (fl.secret && !secrets) {
-                if (v.length() == 0) return "(пусто)";
+                if (v.length() == 0)
+                    return "(пусто)";
                 return String("(задано, ") + v.length() + " симв.)";
             }
             return v.length() ? v : String("(пусто)");
         }
         case CFG_U16: {
             char b[16];
-            if (strcmp(fl.cmd, "lora_sync") == 0) snprintf(b, sizeof(b), "0x%02X", cfg.*(fl.u));
-            else snprintf(b, sizeof(b), "%u", cfg.*(fl.u));
+            if (strcmp(fl.cmd, "lora_sync") == 0)
+                snprintf(b, sizeof(b), "0x%02X", cfg.*(fl.u));
+            else
+                snprintf(b, sizeof(b), "%u", cfg.*(fl.u));
             return b;
         }
         case CFG_I16: {
@@ -166,8 +202,13 @@ static String cfgValueStr(const CfgField& fl, bool secrets) {
             // 6 знаков после точки хватает для частоты 868.731018 и не тянет float-printf
             fmtFix(cfg.*(fl.f), 6, b, sizeof(b));
             // хвостовые нули убираем, чтобы "62.5" не превращалось в "62.500000"
-            for (int i = (int)strlen(b) - 1; i > 0 && b[i] == '0'; i--) b[i] = 0;
-            { int i = (int)strlen(b) - 1; if (i > 0 && b[i] == '.') b[i] = 0; }
+            for (int i = (int)strlen(b) - 1; i > 0 && b[i] == '0'; i--)
+                b[i] = 0;
+            {
+                int i = (int)strlen(b) - 1;
+                if (i > 0 && b[i] == '.')
+                    b[i] = 0;
+            }
             return b;
         }
     }
@@ -185,25 +226,26 @@ void cfgPrint(bool secrets) {
 // Питание периферии. Единственное место, где этот пин трогают: и старт прошивки, и
 // команда «cfg vext» ходят сюда, иначе защита платы жила бы только в одном из них.
 void vextApply(uint16_t vextOn) {
-    #if defined(VEXT_PIN)
+#if defined(VEXT_PIN)
     pinMode(VEXT_PIN, OUTPUT);
-    #if VEXT_IS_BOARD_POWER
+#if VEXT_IS_BOARD_POWER
     // Пин питает ВСЮ плату (T-Deck: GPIO10 BOARD_POWERON). Выключить его настройкой
     // значит погасить узел целиком, поэтому настройка здесь ничего не решает — но молчать
     // об этом нельзя: иначе «я же выключил, а оно горит» не объяснить.
     digitalWrite(VEXT_PIN, VEXT_EN_ACTIVE);
     if (!vextOn)
-        Serial.printf("[CFG] vext=0 не применён: пин %d питает всю плату, выключение "
-                      "погасило бы узел целиком\n", (int)VEXT_PIN);
-    #else
+        Serial.printf(
+            "[CFG] vext=0 не применён: пин %d питает всю плату, выключение "
+            "погасило бы узел целиком\n",
+            (int)VEXT_PIN);
+#else
     digitalWrite(VEXT_PIN, vextOn ? HIGH : LOW);
-    Serial.printf("[CFG] питание периферии: пин %d -> %s\n",
-                  (int)VEXT_PIN, vextOn ? "HIGH" : "LOW");
-    #endif
-    #else
+    Serial.printf("[CFG] питание периферии: пин %d -> %s\n", (int)VEXT_PIN, vextOn ? "HIGH" : "LOW");
+#endif
+#else
     (void)vextOn;
     Serial.println("[CFG] у этой платы нет управляемого питания периферии");
-    #endif
+#endif
 }
 
 static void cfgHelp() {
@@ -214,23 +256,28 @@ static void cfgHelp() {
     Serial.println("  clear <поле>    вернуть полю значение по умолчанию");
     Serial.println("  save            записать в NVS");
     Serial.println("  reboot          перезагрузить");
-    Serial.println("  bri <0..255>    применить яркость экрана сразу");
+    Serial.println("  bri <0..255>    яркость экрана сразу (при авто-режиме — дневная)");
+#if AUTO_BRIGHTNESS_ENABLED
+    Serial.println("  autobri <on|off|toggle>  авто-яркость экрана по времени суток");
+#endif
     Serial.println("  vext <0|1>      уровень питания периферии сразу (подбор полярности)");
     Serial.print("  поля:");
-    for (size_t i = 0; i < FIELD_COUNT; i++) Serial.printf(" %s", FIELDS[i].cmd);
+    for (size_t i = 0; i < FIELD_COUNT; i++)
+        Serial.printf(" %s", FIELDS[i].cmd);
     Serial.println();
     Serial.println("  ключи каналов — base64 от 16 байт; пустой ключ = автоключ по имени");
     Serial.println("  параметры радио обязаны совпадать у всех узлов сети");
 }
 
-static const CfgField* cfgFind(const String& field) {
+static const CfgField *cfgFind(const String &field) {
     for (size_t i = 0; i < FIELD_COUNT; i++) {
-        if (field == FIELDS[i].cmd) return &FIELDS[i];
+        if (field == FIELDS[i].cmd)
+            return &FIELDS[i];
     }
     return NULL;
 }
 
-static bool cfgSetField(const CfgField& fl, const String& value) {
+static bool cfgSetField(const CfgField &fl, const String &value) {
     // Числовые поля проверяем на месте: бессмысленный lora_sf=2 или vext_on=5 уедет в NVS,
     // и после save узел просто пропадёт из сети. Ошибку лучше сказать сразу, чем чинить
     // потом снятием питания.
@@ -245,20 +292,29 @@ static bool cfgSetField(const CfgField& fl, const String& value) {
             break;
         // strtol с основанием 0 понимает и 18, и 0x12 — слово синхронизации привычнее в hex
         case CFG_U16: {
-            unsigned long v = strtoul(value.c_str(), NULL, 0);   // до усечения: 70000 и 4464 — разные
-            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) { badNum = true; break; }
+            unsigned long v = strtoul(value.c_str(), NULL, 0); // до усечения: 70000 и 4464 — разные
+            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) {
+                badNum = true;
+                break;
+            }
             cfg.*(fl.u) = (uint16_t)v;
             break;
         }
         case CFG_I16: {
             long v = strtol(value.c_str(), NULL, 0);
-            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) { badNum = true; break; }
+            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) {
+                badNum = true;
+                break;
+            }
             cfg.*(fl.i) = (int16_t)v;
             break;
         }
         case CFG_FLT: {
             float v = parseFixed(value.c_str());
-            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) { badNum = true; break; }
+            if (!cfgRangeOk((double)v, fl.lo, fl.hi)) {
+                badNum = true;
+                break;
+            }
             cfg.*(fl.f) = v;
             break;
         }
@@ -274,7 +330,8 @@ static bool cfgSetField(const CfgField& fl, const String& value) {
 
 static void cfgHandleLine(String line) {
     line.trim();
-    if (line.length() == 0) return;
+    if (line.length() == 0)
+        return;
 
     int sp = line.indexOf(' ');
     String verb = (sp < 0) ? line : line.substring(0, sp);
@@ -289,31 +346,80 @@ static void cfgHandleLine(String line) {
         Serial.printf("[CFG] яркость %u применена (нужен save)\n", cfg.dispBri);
         return;
     }
+#if AUTO_BRIGHTNESS_ENABLED
+    if (verb == "autobri") {
+        // autobri <on|off>|<toggle>. Меняет и живое состояние, и настройку auto_bri,
+        // которая переживает перезагрузку (в NVS попадает по "save", как и остальное).
+        if (rest == "on" || rest == "1") {
+            cfg.autoBri = 1;
+            mcUiAutoBrightnessSetEnabled(true);
+            mcUiSetBrightness((uint8_t)cfg.dispBri);
+            Serial.println("[CFG] авто-яркость: включено");
+        } else if (rest == "off" || rest == "0") {
+            cfg.autoBri = 0;
+            mcUiAutoBrightnessSetEnabled(false);
+            mcUiSetBrightness((uint8_t)cfg.dispBri); // сразу возвращаем ручную яркость
+            Serial.println("[CFG] авто-яркость: выключено");
+        } else if (rest == "toggle" || rest == "") {
+            const bool on = !mcUiAutoBrightnessEnabled();
+            cfg.autoBri = on ? 1 : 0;
+            mcUiAutoBrightnessSetEnabled(on);
+            mcUiSetBrightness((uint8_t)cfg.dispBri);
+            Serial.printf("[CFG] авто-яркость: %s\n", on ? "включено" : "выключено");
+        } else {
+            Serial.println("[CFG] autobri <on|off|toggle>");
+        }
+        return;
+    }
+#endif
     if (verb == "vext") {
         cfg.vextOn = (uint16_t)rest.toInt();
         vextApply(cfg.vextOn);
         Serial.println("[CFG] питание периферии применено (нужен save)");
         return;
     }
-    if (verb == "help") { cfgHelp(); return; }
-    if (verb == "show") { cfgPrint(rest == "all"); return; }
-    if (verb == "save") { cfgSave(); return; }
-    if (verb == "reboot") { Serial.println("[CFG] перезагрузка..."); delay(200); ESP.restart(); return; }
+    if (verb == "help") {
+        cfgHelp();
+        return;
+    }
+    if (verb == "show") {
+        cfgPrint(rest == "all");
+        return;
+    }
+    if (verb == "save") {
+        cfgSave();
+        return;
+    }
+    if (verb == "reboot") {
+        Serial.println("[CFG] перезагрузка...");
+        delay(200);
+        ESP.restart();
+        return;
+    }
     if (verb == "clear") {
-        const CfgField* fl = cfgFind(rest);
-        if (!fl) { Serial.printf("[CFG] неизвестное поле '%s'\n", rest.c_str()); return; }
+        const CfgField *fl = cfgFind(rest);
+        if (!fl) {
+            Serial.printf("[CFG] неизвестное поле '%s'\n", rest.c_str());
+            return;
+        }
         cfgSetDefault(*fl);
         Serial.printf("[CFG] %s очищено (нужен save)\n", rest.c_str());
         return;
     }
     if (verb == "set") {
         int sp2 = rest.indexOf(' ');
-        if (sp2 <= 0) { Serial.println("[CFG] нужно: set <поле> <значение>"); return; }
+        if (sp2 <= 0) {
+            Serial.println("[CFG] нужно: set <поле> <значение>");
+            return;
+        }
         String field = rest.substring(0, sp2);
         String value = rest.substring(sp2 + 1);
         value.trim();
-        const CfgField* fl = cfgFind(field);
-        if (!fl) { Serial.printf("[CFG] неизвестное поле '%s', см. help\n", field.c_str()); return; }
+        const CfgField *fl = cfgFind(field);
+        if (!fl) {
+            Serial.printf("[CFG] неизвестное поле '%s', см. help\n", field.c_str());
+            return;
+        }
         if (!cfgSetField(*fl, value)) {
             Serial.printf("[CFG] %s не задано: значение вне диапазона\n", field.c_str());
             return;
@@ -334,7 +440,7 @@ static uint8_t cfgReplyHead = 0;
 static uint8_t cfgReplyCount = 0;
 static unsigned long cfgReplyNextMs = 0;
 
-static void cfgReplyPush(const String& msg) {
+static void cfgReplyPush(const String &msg) {
     if (cfgReplyCount >= CFG_REPLY_QUEUE_MAX) {
         // Молча терять часть ответа нельзя: читающий получит набор настроек с дырой и не
         // узнает об этом. Очередь на шесть частей, а полный набор укладывается в две-три.
@@ -346,13 +452,16 @@ static void cfgReplyPush(const String& msg) {
 }
 
 void cfgReplyTick() {
-    if (cfgReplyCount == 0) return;
+    if (cfgReplyCount == 0)
+        return;
     // Идёт прошивка по радио — эфир занят целиком, очередь ждёт. Ответ на «cfg get» никуда не
     // торопится, а чанк, потерянный из-за него, стоит повтора всего окна.
-    if (otaAnySessionActive()) return;
-    if (cfgReplyNextMs != 0 && (long)(millis() - cfgReplyNextMs) < 0) return;
+    if (otaAnySessionActive())
+        return;
+    if (cfgReplyNextMs != 0 && (long)(millis() - cfgReplyNextMs) < 0)
+        return;
     String msg = cfgReplyQueue[cfgReplyHead];
-    cfgReplyQueue[cfgReplyHead] = String();   // не держим текст дольше нужного
+    cfgReplyQueue[cfgReplyHead] = String(); // не держим текст дольше нужного
     cfgReplyHead = (cfgReplyHead + 1) % CFG_REPLY_QUEUE_MAX;
     cfgReplyCount--;
     sensorSendMsg(msg.c_str(), 0, 1);
@@ -365,10 +474,10 @@ static unsigned long cfgPendingSince = 0;
 // Настройка сенсора по радио. Присваивание идёт только в память: пока не пришёл "save",
 // любую ошибку чинит снятие питания. Поэтому смена ключа канала или параметров радио
 // становится опасной лишь после save и перезагрузки.
-void cfgHandleMeshCfg(const String& rest) {
+void cfgHandleMeshCfg(const String &rest) {
     if (rest == "save") {
         cfgSave();
-        cfgPendingSince = 0;   // подтверждено, сторож больше не нужен
+        cfgPendingSince = 0; // подтверждено, сторож больше не нужен
         sensorSendMsg("cfg:ok:save", 0, 1);
         return;
     }
@@ -387,12 +496,14 @@ void cfgHandleMeshCfg(const String& rest) {
         // В ОЧЕРЕДЬ, а не отправляется здесь с delay(). Раньше между частями стоял delay(1500)
         // прямо в разборе команды: на каждую часть узел на полторы секунды перестаёт обслуживать
         // радио, сторожа сессий прошивки и свои задачи, — а частей бывает три.
-        const char* PREFIX = "cfg:val:";
+        const char *PREFIX = "cfg:val:";
         String out = PREFIX;
         for (size_t i = 0; i < FIELD_COUNT; i++) {
-            if (FIELDS[i].secret) continue;
+            if (FIELDS[i].secret)
+                continue;
             String v = cfgValueStr(FIELDS[i], false);
-            if (v.length() == 0 || v == "(пусто)") continue;
+            if (v.length() == 0 || v == "(пусто)")
+                continue;
             String piece = String(FIELDS[i].cmd) + "=" + v + ";";
             // Одно поле длиннее целой части: раньше его отправляли как есть, и ответ вылезал за
             // предел молча. Обрезаем значение и помечаем обрезку, чтобы читающий это видел.
@@ -403,12 +514,13 @@ void cfgHandleMeshCfg(const String& rest) {
             // Предел проверяется ПОСЛЕ добавления: именно порядок «сначала добавить, потом
             // смотреть» и давал части длиннее предела.
             if (out.length() + piece.length() > CFG_GET_PART_MAX) {
-                cfgReplyPush(out);          // в очередь уходит только непустая часть
+                cfgReplyPush(out); // в очередь уходит только непустая часть
                 out = PREFIX;
             }
             out += piece;
         }
-        if (out.length() > strlen(PREFIX)) cfgReplyPush(out);
+        if (out.length() > strlen(PREFIX))
+            cfgReplyPush(out);
         return;
     }
     int eq = rest.indexOf('=');
@@ -418,7 +530,7 @@ void cfgHandleMeshCfg(const String& rest) {
     }
     String field = rest.substring(0, eq);
     String value = rest.substring(eq + 1);
-    const CfgField* fl = cfgFind(field);
+    const CfgField *fl = cfgFind(field);
     if (!fl) {
         sensorSendMsg(("cfg:err:" + field).c_str(), 0, 1);
         return;
@@ -433,23 +545,29 @@ void cfgHandleMeshCfg(const String& rest) {
 }
 
 void cfgPendingTick() {
-    if (cfgPendingSince == 0) return;
-    if (otaActive) return;               // посреди прошивки перезагружаться нельзя
-    if (millis() - cfgPendingSince < CFG_PENDING_REVERT_MS) return;
+    if (cfgPendingSince == 0)
+        return;
+    if (otaActive)
+        return; // посреди прошивки перезагружаться нельзя
+    if (millis() - cfgPendingSince < CFG_PENDING_REVERT_MS)
+        return;
     Serial.println("[CFG] подтверждения save не было — перезагрузка к сохранённым настройкам");
     delay(100);
     ESP.restart();
 }
 #endif
 
-int cfgFieldCount() { return (int)FIELD_COUNT; }
+int cfgFieldCount() {
+    return (int)FIELD_COUNT;
+}
 
-const char* cfgFieldName(int idx) {
+const char *cfgFieldName(int idx) {
     return (idx >= 0 && idx < (int)FIELD_COUNT) ? FIELDS[idx].cmd : "";
 }
 
 String cfgFieldValue(int idx, bool secrets) {
-    if (idx < 0 || idx >= (int)FIELD_COUNT) return "";
+    if (idx < 0 || idx >= (int)FIELD_COUNT)
+        return "";
     return cfgValueStr(FIELDS[idx], secrets);
 }
 
@@ -457,12 +575,14 @@ bool cfgFieldSecret(int idx) {
     return (idx >= 0 && idx < (int)FIELD_COUNT) ? FIELDS[idx].secret : false;
 }
 
-int cfgApply(const String& field, const String& value) {
-    const CfgField* fl = cfgFind(field);
-    if (!fl) return CFG_APPLY_UNKNOWN;
+int cfgApply(const String &field, const String &value) {
+    const CfgField *fl = cfgFind(field);
+    if (!fl)
+        return CFG_APPLY_UNKNOWN;
     // Результат cfgSetField раньше отбрасывался, и страница сообщала об успехе, хотя
     // значение вне диапазона не применялось.
-    if (!cfgSetField(*fl, value)) return CFG_APPLY_BAD_VALUE;
+    if (!cfgSetField(*fl, value))
+        return CFG_APPLY_BAD_VALUE;
     return CFG_APPLY_OK;
 }
 
@@ -472,7 +592,8 @@ bool cfgIdentitySeed(uint8_t out[32]) {
     // слышал. Seed случайный, лежит в NVS рядом с настройками и переживает и обновление
     // прошивки, и переименование узла.
     Preferences p;
-    if (!p.begin(NS, false)) return false;
+    if (!p.begin(NS, false))
+        return false;
     size_t got = p.isKey("id_seed") ? p.getBytes("id_seed", out, 32) : 0;
     if (got != 32) {
         esp_fill_random(out, 32);
@@ -491,7 +612,8 @@ void cfgConsoleTick() {
     static String line;
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == '\r') continue;
+        if (c == '\r')
+            continue;
         if (c == '\n') {
             String done = line;
             line = "";

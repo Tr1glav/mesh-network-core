@@ -9,7 +9,7 @@ void radioSetFastConfig();
 // true, если последний переход в быстрый режим действительно удался (beginFSK без ошибок)
 bool radioFastReadyNow();
 void rearmRadioAGC();
-int txFrame(uint8_t* frame, int f);
+int txFrame(uint8_t *frame, int f);
 
 // Сколько миллисекунд кадр такой длины занимает эфир при ТЕКУЩИХ настройках радио.
 //

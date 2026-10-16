@@ -1,10 +1,10 @@
 #include "config.h"
-#include "mc_platform.h"   // mcAirPump: чем занять ожидание эфира
+#include "mc_platform.h" // mcAirPump: чем занять ожидание эфира
 #include "globals.h"
-#include "crypto.h"   // fmtFix: печать чисел без float-printf
-#include "mesh.h"     // meshTxDropQueued: копии флуда не должны уехать после FSK
+#include "crypto.h" // fmtFix: печать чисел без float-printf
+#include "mesh.h"   // meshTxDropQueued: копии флуда не должны уехать после FSK
 #include "radio.h"
-#include "ota.h"      // slog: сверка бюджета должна быть видна без USB
+#include "ota.h" // slog: сверка бюджета должна быть видна без USB
 
 void rearmRadioAGC() {
     radio.sleep();
@@ -31,47 +31,54 @@ void rearmRadioAGC() {
 // бессмысленно — там другая модуляция и отдельный канал, на котором кроме нас никого нет;
 // возвращаем бюджет сборки, чтобы вызывающий не получил ноль.
 uint32_t radioAirtimeMs(int len) {
-    if (otaFastMode) return FRAME_AIRTIME_MS;
-    if (len <= 0) len = 1;
-    if (len > 255) len = 255;
+    if (otaFastMode)
+        return FRAME_AIRTIME_MS;
+    if (len <= 0)
+        len = 1;
+    if (len > 255)
+        len = 255;
     const uint32_t us = radio.getTimeOnAir((size_t)len);
-    if (us == 0) return FRAME_AIRTIME_MS;      // радио не настроено — не врём нулём
+    if (us == 0)
+        return FRAME_AIRTIME_MS; // радио не настроено — не врём нулём
     const uint32_t ms = (us + 999) / 1000;
     return ms ? ms : 1;
 }
 
 static bool waitChannelFree() {
-    if (otaFastMode) return true;
+    if (otaFastMode)
+        return true;
     const unsigned long startedMs = millis();
     for (int i = 0; i < CAD_MAX_TRIES; i++) {
         const int16_t st = radio.scanChannel();
-        if (st == RADIOLIB_CHANNEL_FREE) return true;
+        if (st == RADIOLIB_CHANNEL_FREE)
+            return true;
         // Занято (LORA_DETECTED / PREAMBLE_DETECTED) либо ошибка сканирования — ждём и
         // пробуем снова. Пауза случайная: иначе два узла, дождавшиеся конца чужой передачи,
         // столкнутся уже друг с другом.
         const int pauseMs = random(CAD_RETRY_MIN_MS, CAD_RETRY_MAX_MS);
-        if ((unsigned long)(millis() - startedMs) + pauseMs >= CAD_WAIT_BUDGET_MS) break;
+        if ((unsigned long)(millis() - startedMs) + pauseMs >= CAD_WAIT_BUDGET_MS)
+            break;
         // Пауза — не сон: прошивке с экраном есть чем её занять (mcAirPump). Пустой
         // delay здесь означал замерший интерфейс на всё ожидание тишины в канале, а это
         // до полутора секунд.
         const unsigned long pauseUntil = millis() + (unsigned long)pauseMs;
-        while ((long)(millis() - pauseUntil) < 0) mcAirPump();
+        while ((long)(millis() - pauseUntil) < 0)
+            mcAirPump();
     }
     cadGiveUps++;
-    Serial.printf("[TX] канал занят дольше %d мс — передаю поверх (всего %lu)\n",
-                  CAD_WAIT_BUDGET_MS, (unsigned long)cadGiveUps);
+    Serial.printf("[TX] канал занят дольше %d мс — передаю поверх (всего %lu)\n", CAD_WAIT_BUDGET_MS,
+                  (unsigned long)cadGiveUps);
     return false;
 }
 
-int txFrame(uint8_t* frame, int f) {
+int txFrame(uint8_t *frame, int f) {
     // Проверка занятости канала уводит чип в standby и затирает ожидающий RX_DONE, а вместе
     // с ним уже принятый пакет: он был получен, но не прочитан. Пока идёт передача, мы всё
     // равно глухи, поэтому честнее сначала разобрать то, что пришло, — и не терять кадр
     // только из-за того, что мы сами что-то собрались слать. В быстром режиме путь другой
     // (там разбор сырых кадров может сам слать), поэтому пропускаем.
-    static bool draining = false;   // защита от повторного входа из разбора принятого
-    if (!otaFastMode && !draining && isListening &&
-        (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE)) {
+    static bool draining = false; // защита от повторного входа из разбора принятого
+    if (!otaFastMode && !draining && isListening && (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_RX_DONE)) {
         draining = true;
         radioRxTick();
         draining = false;
@@ -82,9 +89,9 @@ int txFrame(uint8_t* frame, int f) {
     // Время эфира складываем расчётом по длине кадра: по нему приложение и страница
     // показывают занятость эфира, а она решает, сколько сеть ещё выдержит.
     txAirtimeMs += (uint32_t)radioAirtimeMs(f);
-    #if HAS_FEM
+#if HAS_FEM
     digitalWrite(FEM_TX_PIN, HIGH);
-    #endif
+#endif
     // Передача НЕ блокирующая. radio.transmit() ждёт конца эфира внутри себя, а эфир у
     // длинного кадра на медленной скорости — до двух секунд: профиль ловил проходы цикла
     // по 2141 мс, и на экране это выглядело замиранием всего устройства. Ждём сами и
@@ -96,7 +103,8 @@ int txFrame(uint8_t* frame, int f) {
         // сами, а не повиснем здесь навсегда.
         const unsigned long deadline = millis() + (unsigned long)radioAirtimeMs(f) + 500;
         for (;;) {
-            if (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_TX_DONE) break;
+            if (radio.getIrqFlags() & RADIOLIB_SX126X_IRQ_TX_DONE)
+                break;
             if ((long)(millis() - deadline) >= 0) {
                 Serial.println("[TX] конец эфира не дождались — идём дальше");
                 break;
@@ -105,9 +113,9 @@ int txFrame(uint8_t* frame, int f) {
         }
         radio.finishTransmit();
     }
-    #if HAS_FEM
+#if HAS_FEM
     digitalWrite(FEM_TX_PIN, LOW);
-    #endif
+#endif
 
     if (st == RADIOLIB_ERR_NONE) {
         Serial.println("[TX] OK");
@@ -126,39 +134,36 @@ int txFrame(uint8_t* frame, int f) {
 // (см. platformio.ini / board_config.h), чтобы на других платах
 // не применять опции, нужные только Heltec V4. begin/beginFSK их сбрасывают.
 static void applyBoardRadioOptions() {
-    #ifdef SX126X_DIO2_AS_RF_SWITCH
+#ifdef SX126X_DIO2_AS_RF_SWITCH
     radio.setDio2AsRfSwitch(true);
-    #endif
-    #ifdef SX126X_RX_BOOSTED_GAIN
+#endif
+#ifdef SX126X_RX_BOOSTED_GAIN
     radio.setRxBoostedGainMode(true);
-    #endif
-    #ifdef SX126X_CURRENT_LIMIT
+#endif
+#ifdef SX126X_CURRENT_LIMIT
     radio.setCurrentLimit(SX126X_CURRENT_LIMIT);
-    #endif
-    #ifdef SX126X_REGISTER_PATCH
+#endif
+#ifdef SX126X_REGISTER_PATCH
     // патч регистра 0x8B5 для улучшенного приёма на Heltec v4
     uint8_t r_data = 0;
     radio.readRegister(0x8B5, &r_data, 1);
     r_data |= 0x01;
     radio.writeRegister(0x8B5, &r_data, 1);
-    #endif
+#endif
 }
 
 bool initLoRa() {
     Serial.println("Init LoRa...");
-    
+
     // Вызов begin() БЕЗ параметра TCXO.
     // RadioLib возьмёт значение из макроса SX126X_DIO3_TCXO_VOLTAGE,
     // который мы определим в platformio.ini.
     char fr[16], bw[12];
-    Serial.printf("[RADIO] %s МГц BW %s SF%u CR%u sync 0x%02X %d дБм\n",
-                  fmtFix(cfg.loraFreq, 4, fr, sizeof(fr)), fmtFix(cfg.loraBw, 1, bw, sizeof(bw)),
-                  cfg.loraSf, cfg.loraCr, cfg.loraSync, cfg.loraTx);
-    int state = radio.begin(
-        cfg.loraFreq, cfg.loraBw, (uint8_t)cfg.loraSf, (uint8_t)cfg.loraCr,
-        (uint8_t)cfg.loraSync, (int8_t)cfg.loraTx, (uint16_t)cfg.loraPre, 1.8
-    );
-    
+    Serial.printf("[RADIO] %s МГц BW %s SF%u CR%u sync 0x%02X %d дБм\n", fmtFix(cfg.loraFreq, 4, fr, sizeof(fr)),
+                  fmtFix(cfg.loraBw, 1, bw, sizeof(bw)), cfg.loraSf, cfg.loraCr, cfg.loraSync, cfg.loraTx);
+    int state = radio.begin(cfg.loraFreq, cfg.loraBw, (uint8_t)cfg.loraSf, (uint8_t)cfg.loraCr, (uint8_t)cfg.loraSync,
+                            (int8_t)cfg.loraTx, (uint16_t)cfg.loraPre, 1.8);
+
     if (state == RADIOLIB_ERR_NONE) {
         Serial.println("LoRa OK (TCXO from macro)");
         radio.setCRC(true);
@@ -181,20 +186,21 @@ bool initLoRa() {
         // признаком странно, но разбирать это здесь не место: у кого страницы нет, тому и
         // журнал читать негде, остаётся Serial.
         const uint32_t airWorst = radioAirtimeMs(255);
-        const char* fmtWarn = "[RADIO] ВНИМАНИЕ: кадр 255 Б висит в эфире %lu мс, а бюджет "
-                              "сборки FRAME_AIRTIME_MS = %d мс. Все выведенные из него "
-                              "таймауты короче нужного: верните прежний SF/полосу или "
-                              "пересоберите ядро\n";
-        const char* fmtOk = "[RADIO] кадр 255 Б в эфире %lu мс, бюджет %d мс\n";
-        const char* fmt = (airWorst > FRAME_AIRTIME_MS) ? fmtWarn : fmtOk;
-        #if FEATURE_MESH_OTA_SENDER
+        const char *fmtWarn =
+            "[RADIO] ВНИМАНИЕ: кадр 255 Б висит в эфире %lu мс, а бюджет "
+            "сборки FRAME_AIRTIME_MS = %d мс. Все выведенные из него "
+            "таймауты короче нужного: верните прежний SF/полосу или "
+            "пересоберите ядро\n";
+        const char *fmtOk = "[RADIO] кадр 255 Б в эфире %lu мс, бюджет %d мс\n";
+        const char *fmt = (airWorst > FRAME_AIRTIME_MS) ? fmtWarn : fmtOk;
+#if FEATURE_MESH_OTA_SENDER
         slog(fmt, (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
-        #else
+#else
         Serial.printf(fmt, (unsigned long)airWorst, (int)FRAME_AIRTIME_MS);
-        #endif
+#endif
         return true;
     }
-    
+
     Serial.printf("LoRa FAILED: %d\n", state);
     return false;
 }
@@ -205,7 +211,7 @@ void radioSetParams(float freq, float bw, int sf, int cr) {
     radio.setBandwidth(bw);
     radio.setSpreadingFactor(sf);
     radio.setCodingRate(cr);
-    lastReArmMs = 0;           // разрешить AGC rearm сразу
+    lastReArmMs = 0; // разрешить AGC rearm сразу
     // Подписываемся на DIO1 ДО старта приёма: радио будет само сообщать о принятом кадре,
     // и опрашивать регистр прерываний в каждом проходе цикла станет незачем
     // (radio_rx.cpp). Подписка идёт здесь, а не один раз в initLoRa: перенастройка канала
@@ -246,8 +252,8 @@ void radioSetFastConfig() {
     meshTxDropQueued();
     fastRxFrames = 0;
     fastRxErrors = 0;
-    int st = radio.beginFSK(OTA_FAST_FREQ, OTA_FSK_BR, OTA_FSK_DEV, OTA_FSK_RXBW,
-                            (int8_t)cfg.loraTx, OTA_FSK_PREAMBLE, 1.8);
+    int st =
+        radio.beginFSK(OTA_FAST_FREQ, OTA_FSK_BR, OTA_FSK_DEV, OTA_FSK_RXBW, (int8_t)cfg.loraTx, OTA_FSK_PREAMBLE, 1.8);
     if (st != RADIOLIB_ERR_NONE) {
         Serial.printf("[RADIO] beginFSK failed %d\n", st);
         radioFastReady = false;
@@ -259,11 +265,13 @@ void radioSetFastConfig() {
     radioFsk = true;
     applyBoardRadioOptions();
     radio.setDataShaping(RADIOLIB_SHAPING_0_5);
-    uint8_t sw[] = { 0xBE, 0xEF, 0x07, 0xA5 };
+    uint8_t sw[] = {0xBE, 0xEF, 0x07, 0xA5};
     radio.setSyncWord(sw, sizeof(sw));
     lastReArmMs = 0;
     radio.startReceive();
     isListening = true;
 }
 
-bool radioFastReadyNow() { return radioFastReady; }
+bool radioFastReadyNow() {
+    return radioFastReady;
+}

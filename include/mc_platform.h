@@ -19,26 +19,32 @@
 
 // Входящее сообщение канала, которое ядро приняло и расшифровало.
 // path — маршрут ("aa bb .."), пустой — кадр пришёл напрямую.
-void mcUiIncoming(const String& channelName, const String& sender, const String& msg,
-                  float rssi, float snr, int hopCount, const String& path);
+void mcUiIncoming(const String &channelName, const String &sender, const String &msg, float rssi, float snr,
+                  int hopCount, const String &path);
 
 // Сообщение сенсорного канала: snsPub — ушло ли оно в MQTT (см. mcMqttPublishSensor).
 void mcUiSensorRx(bool snsPub, float rssi);
 
 // Групповое сообщение, которое не расшифровалось (нет ключа канала): показать hex.
-void mcUiHexScreen(int pktLen, float rssi, float snr, const uint8_t* buffer);
+void mcUiHexScreen(int pktLen, float rssi, float snr, const uint8_t *buffer);
 
 // Применить яркость экрана сразу (команда "bri" из настройки по радио).
 void mcUiSetBrightness(uint8_t bri);
 
+// Авто-яркость экрана по времени суток. Расписание и панель — дело прошивки платы:
+// ядро только хранит признак в настройке auto_bri и даёт переключить его командой
+// "autobri". Где панели нет, работают заглушки: признак всегда выключен.
+bool mcUiAutoBrightnessEnabled();
+void mcUiAutoBrightnessSetEnabled(bool on);
+
 // Mesh OTA, раздающая сторона (координатор/прошивальщик).
-void mcUiOtaAbort(const char* why);
-void mcUiOtaProgress(const String& target, uint32_t pct, uint32_t pkts, float rssi, float snr);
-void mcUiOtaDone(const String& target);
+void mcUiOtaAbort(const char *why);
+void mcUiOtaProgress(const String &target, uint32_t pct, uint32_t pkts, float rssi, float snr);
+void mcUiOtaDone(const String &target);
 
 // Mesh OTA, принимающая сторона (узел).
 void mcUiOtaSensorProgress(uint32_t got, uint32_t total, uint32_t pkts, float rssi, float snr);
-void mcUiOtaSensorAbort(const char* why, uint32_t rxFrames, uint32_t rxErr);
+void mcUiOtaSensorAbort(const char *why, uint32_t rxFrames, uint32_t rxErr);
 
 // Зажечь экран: используется, когда пришла прошивка и нужно показать её ход.
 // Имя без приставки mc — историческое: хук появился раньше остальных, и переименование
@@ -51,13 +57,13 @@ void mcScreenToggle();
 
 // ===== БАТАРЕЯ (узел) =====
 bool mcBatteryPresent();
-int mcBatteryPercent();      // 0..100; -1 — измерения нет или аккумулятор не подключён
-float mcBatteryVoltage();    // вольты; 0 — платы без измерения батареи
+int mcBatteryPercent();   // 0..100; -1 — измерения нет или аккумулятор не подключён
+float mcBatteryVoltage(); // вольты; 0 — платы без измерения батареи
 
 // ===== ПОЗИЦИЯ (GPS) =====
 // Координаты узла в микроградусах для hello: плата с приёмником отвечает true и пишет
 // широту/долготу; без приёмника те поля в heartbeat не дописываются вовсе.
-bool mcBoardPosition(int32_t* latUdeg, int32_t* lonUdeg);
+bool mcBoardPosition(int32_t *latUdeg, int32_t *lonUdeg);
 
 // ===== СЕТЬ (узел-прошивальщик) =====
 // Объявление "support:<адрес>" полезно только когда WiFi поднялся.
@@ -145,10 +151,8 @@ void mcOnOwnFrameEcho(const uint8_t hash[32]);
 //
 // msg — то, что подписано (ключ, время, прикладные данные), ровно в том виде, в каком его
 // считает подписывающий. path может быть обрезан: он нужен не всем.
-bool mcVerifyAdvertAsync(const uint8_t sig[64], const uint8_t pub[32],
-                         const uint8_t* msg, int mlen,
-                         const uint8_t* app, int applen,
-                         uint8_t pathLen, const uint8_t* path);
+bool mcVerifyAdvertAsync(const uint8_t sig[64], const uint8_t pub[32], const uint8_t *msg, int mlen, const uint8_t *app,
+                         int applen, uint8_t pathLen, const uint8_t *path);
 
 // ===== ВОЗВРАТ МАРШРУТА =====
 // Узел прислал дорогу ДО СЕБЯ: srcHash — его короткий хэш, pathLen — байт разметки пути
@@ -156,8 +160,8 @@ bool mcVerifyAdvertAsync(const uint8_t sig[64], const uint8_t pub[32],
 // Хранит это тот, кто ведёт список контактов, то есть прошивка с приложением: ядро не знает,
 // кому этот маршрут показывать. Довесок (extraType/extra) оригинал использует под
 // подтверждение доставки.
-void mcOnPathRecv(uint8_t srcHash, uint8_t pathLen, const uint8_t* path,
-                  uint8_t extraType, const uint8_t* extra, int extraLen);
+void mcOnPathRecv(uint8_t srcHash, uint8_t pathLen, const uint8_t *path, uint8_t extraType, const uint8_t *extra,
+                  int extraLen);
 
 // ===== КНОПКА: ЖЕЛЕЗО =====
 // Смысл нажатия держит ядро (src/button.cpp): серия коротких, долгое удержание, окно
@@ -179,7 +183,7 @@ bool mcButtonDown();
 // узле; смысл имеет на прошивальщике: он слышит дальние узлы лучше координатора, и его
 // прошивка перекрывает хук, чтобы слать такие кадры координатору по сети (POST /ears).
 // Остальные платформы живут со слабой заглушкой.
-void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr);
+void mcOnFreshFrame(const uint8_t *buf, size_t len, float rssi, float snr);
 
 // ===== ОТВЕТ РЕТРАНСЛЯТОРА =====
 // Пришёл кадр RESPONSE: srcHash — короткий хэш ответившего, srcPub — его полный ключ (он
@@ -187,7 +191,7 @@ void mcOnFreshFrame(const uint8_t* buf, size_t len, float rssi, float snr);
 // то есть [метка 4][тело]. Метку ядро не толкует: какой это ответ — на вход, на состояние,
 // на телеметрию — помнит тот, кто запрос отправлял, а отправляет их приложение через
 // компаньона. Тело тоже разное у каждого типа запроса и нужно только приложению.
-void mcOnResponseRecv(uint8_t srcHash, const uint8_t* srcPub, const uint8_t* data, int len);
+void mcOnResponseRecv(uint8_t srcHash, const uint8_t *srcPub, const uint8_t *data, int len);
 
 // ===== СЫРОЙ ЖУРНАЛ ПРИЁМА =====
 // Кадр ТОЛЬКО ЧТО принят с радио: до дедупа, до разбора, до ретрансляции. Оригинал отдаёт
@@ -195,14 +199,14 @@ void mcOnResponseRecv(uint8_t srcHash, const uint8_t* srcPub, const uint8_t* dat
 // его собственный пакет переиздал ретранслятор, — отсюда в переписке берётся отметка
 // «принято ретранслятором». Дедуп здесь обойти обязательно: переизданная копия для нас
 // дубликат, а для приложения это и есть само событие.
-void mcOnRawRx(const uint8_t* raw, int len, float snr, float rssi);
+void mcOnRawRx(const uint8_t *raw, int len, float snr, float rssi);
 
 // Передать кадр прошивальщику по сети, чтобы он вывел его в эфир СО СВОЕГО радио.
 // Используется для ответов на пинг, пришедший через «вторые уши»: узел, которого слышит
 // только прошивальщик, ответ с радио координатора не услышит. Реализует координатор
 // (POST /radiotx); вернёт false, если прошивальщика нет или сеть молчит, — тогда ядро
 // уходит на обычный локальный флуд.
-bool mcRelayFrameToSupport(const char* supName, const uint8_t* frame, int len);
+bool mcRelayFrameToSupport(const char *supName, const uint8_t *frame, int len);
 
 // ===== MQTT (координатор) =====
 // Опубликовать последнее принятое сообщение (сводный топик координатора) / данные датчика.
@@ -222,18 +226,17 @@ bool publishSensorMessage();
 // тому, у кого есть BLE. Но «кому показать» и «как показать» — разные вопросы: ядру
 // довольно того, что получатель есть. Поэтому хуки объявлены всегда, а у кого их нет —
 // работает слабая заглушка.
-void companionOnChannelText(int channelIdx, const String& text, float snr, uint8_t pathLen,
-                            uint32_t senderTs, bool notify = true);
+void companionOnChannelText(int channelIdx, const String &text, float snr, uint8_t pathLen, uint32_t senderTs,
+                            bool notify = true);
 // Личное сообщение приложению отдаётся НЕ как сообщение канала: в оригинале у него свой код
 // кадра и свой адресат — контакт, а не канал. Пока личка приезжала каналом, приложение
 // показывало её в общей переписке и не знало, от кого она, а значит не могло показать ни
 // маршрут, ни доставку. srcPub — полный ключ отправителя (приложению нужны его первые шесть
 // байт), senderTs — время по часам ОТПРАВИТЕЛЯ из открытого текста, txtType — старшие шесть
 // бит байта флагов (0 — обычный текст, 1 — ответ командной строки).
-void companionOnDirectText(const uint8_t* srcPub, const String& text, float snr,
-                           uint8_t pathLen, uint32_t senderTs, uint8_t txtType);
-void companionOnAdvert(const uint8_t* pub, const uint8_t* app, int applen,
-                       uint8_t pathLen, const uint8_t* path);
+void companionOnDirectText(const uint8_t *srcPub, const String &text, float snr, uint8_t pathLen, uint32_t senderTs,
+                           uint8_t txtType);
+void companionOnAdvert(const uint8_t *pub, const uint8_t *app, int applen, uint8_t pathLen, const uint8_t *path);
 
 // ===== УЗЕЛ-ПРОШИВАЛЬЩИК (support) =====
 // Сессию mesh OTA вместо координатора может вести отдельный узел-прошивальщик: он
@@ -249,13 +252,13 @@ bool supportPresent();
 // Кто из них дотягивается до этой цели лучше всех (наименьшее число хопов, тот же порог
 // otaHopsReachable) — индекс в supports[] или -1. Спрашивает у каждого по сети, поэтому
 // живёт в прошивке, а не в ядре.
-int supportIndexFor(const String& target);
+int supportIndexFor(const String &target);
 // Кто может вести медленную сессию к этой цели. Хопы здесь не спрашиваются: медленный режим
 // едет обычными сообщениями и доходит туда же, куда доходит сеть, — важно лишь, что ведущий
 // жив и что цель не он сам.
-int supportIndexForAny(const String& target);
+int supportIndexForAny(const String &target);
 bool supportBusy();
 // Сессию ведёт конкретный прошивальщик: supIdx — индекс в supports[].
-bool supportJobStart(uint8_t kind, int supIdx, const String& target);
+bool supportJobStart(uint8_t kind, int supIdx, const String &target);
 // who — имя того, кто вёл: его показывает страница и по нему ставится otaDelegate.
-bool supportJobFinished(uint8_t& kind, bool& ok, String& target, String& who);
+bool supportJobFinished(uint8_t &kind, bool &ok, String &target, String &who);

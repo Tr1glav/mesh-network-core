@@ -19,44 +19,56 @@
 // соседями был вдвое уже, чем считалось. Ноль означает «не задано»: иначе база по
 // умолчанию, равная FLOOD_RETRY_MIN_MS, снова прижимала бы диапазон к нижней границе.
 unsigned int floodGapMs(unsigned int baseMs) {
-    if (baseMs == 0) return random(FLOOD_RETRY_MIN_MS, FLOOD_RETRY_MAX_MS + FLOOD_JITTER_MS);
-    if (baseMs < FLOOD_RETRY_MIN_MS) baseMs = FLOOD_RETRY_MIN_MS;
-    if (baseMs > FLOOD_RETRY_MAX_MS) baseMs = FLOOD_RETRY_MAX_MS;
+    if (baseMs == 0)
+        return random(FLOOD_RETRY_MIN_MS, FLOOD_RETRY_MAX_MS + FLOOD_JITTER_MS);
+    if (baseMs < FLOOD_RETRY_MIN_MS)
+        baseMs = FLOOD_RETRY_MIN_MS;
+    if (baseMs > FLOOD_RETRY_MAX_MS)
+        baseMs = FLOOD_RETRY_MAX_MS;
     return random(baseMs, baseMs + FLOOD_JITTER_MS);
 }
 
 void sendAdvert(uint8_t route_type) {
     uint8_t app[32];
     int applen = 0;
-    app[applen++] = 0x80 | 0x01;  // ADV_TYPE_CHAT + имя
-    const char* name = cfg.name.c_str();
+    app[applen++] = 0x80 | 0x01; // ADV_TYPE_CHAT + имя
+    const char *name = cfg.name.c_str();
     int nlen = (int)cfg.name.length();
-    if (nlen > 31) nlen = 31;
+    if (nlen > 31)
+        nlen = 31;
     memcpy(app + applen, name, nlen);
     applen += nlen;
 
     uint8_t frame[190];
     int f = 0;
-    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ADVERT << 2) | (route_type & 0x03));  // ADVERT | route
-    frame[f++] = PATH_LEN_INIT;  // path_len: размер хэша и 0 хопов
+    frame[f++] = (uint8_t)((PAYLOAD_TYPE_ADVERT << 2) | (route_type & 0x03)); // ADVERT | route
+    frame[f++] = PATH_LEN_INIT;                                               // path_len: размер хэша и 0 хопов
 
-    memcpy(frame + f, bot_pub, 32); f += 32;
+    memcpy(frame + f, bot_pub, 32);
+    f += 32;
     uint32_t ts = (uint32_t)time(NULL);
-    memcpy(frame + f, &ts, 4); f += 4;
+    memcpy(frame + f, &ts, 4);
+    f += 4;
 
     uint8_t msg[32 + 4 + 32];
     int mlen = 0;
-    memcpy(msg + mlen, bot_pub, 32); mlen += 32;
-    memcpy(msg + mlen, &ts, 4); mlen += 4;
-    memcpy(msg + mlen, app, applen); mlen += applen;
+    memcpy(msg + mlen, bot_pub, 32);
+    mlen += 32;
+    memcpy(msg + mlen, &ts, 4);
+    mlen += 4;
+    memcpy(msg + mlen, app, applen);
+    mlen += applen;
 
     uint8_t sig[64];
     Ed25519::sign(sig, bot_priv, bot_pub, msg, mlen);
-    memcpy(frame + f, sig, 64); f += 64;
-    memcpy(frame + f, app, applen); f += applen;
+    memcpy(frame + f, sig, 64);
+    f += 64;
+    memcpy(frame + f, app, applen);
+    f += applen;
 
     Serial.printf("\n[TX ADV] route=%u (%dB)\n", route_type, f);
-    for (int i = 0; i < f; i++) Serial.printf("%02X", frame[i]);
+    for (int i = 0; i < f; i++)
+        Serial.printf("%02X", frame[i]);
     Serial.println();
     // Объявление уходит FLOOD_REPEATS копиями, как и всякое сообщение. Раньше оно уходило
     // ровно один раз, и это была отдельная беда: адверт несёт публичный ключ, и потерянный
@@ -76,9 +88,9 @@ void sendAdvert(uint8_t route_type) {
     floodSendQueued(-1, frame, f);
 }
 
-int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc, uint32_t* outTs,
-                  uint32_t msgTs) {
-    if (chIdx < 0 || chIdx >= numChannels) return 0;
+int buildGroupEnc(int chIdx, const String &msg, uint8_t *enc, uint32_t *outTs, uint32_t msgTs) {
+    if (chIdx < 0 || chIdx >= numChannels)
+        return 0;
     uint8_t plaintext[GROUP_TEXT_MAX_PLAIN];
     // ts — Unix-время в СЕКУНДАХ (как у adverts и личных сообщений): epoch-ms не
     // помещается в uint32. Пока часы не выставлены — millis.
@@ -89,41 +101,43 @@ int buildGroupEnc(int chIdx, const String& msg, uint8_t* enc, uint32_t* outTs,
     // разойдутся, и у СВОИХ исходящих сообщений маршрут не покажется. Та же причина, по
     // которой метку приложения принимает сборщик лички.
     uint32_t now = (uint32_t)time(NULL);
-    uint32_t ts = (msgTs != 0) ? msgTs
-                               : ((now > 1000000000) ? now : (uint32_t)millis());
-    if (outTs) *outTs = ts;
-    memcpy(plaintext, &ts, 4);                      // timestamp (LE)
-    plaintext[4] = 0;                               // TXT_TYPE_PLAIN
+    uint32_t ts = (msgTs != 0) ? msgTs : ((now > 1000000000) ? now : (uint32_t)millis());
+    if (outTs)
+        *outTs = ts;
+    memcpy(plaintext, &ts, 4); // timestamp (LE)
+    plaintext[4] = 0;          // TXT_TYPE_PLAIN
     size_t plen = 5;
     // "имя: " собирается в рантайме: имя приходит из настроек, а не из макроса
     char prefix[48];
     int pn = snprintf(prefix, sizeof(prefix), "%s: ", cfg.name.c_str());
-    if (pn < 0) pn = 0;
-    if (pn > (int)sizeof(prefix) - 1) pn = (int)sizeof(prefix) - 1;
+    if (pn < 0)
+        pn = 0;
+    if (pn > (int)sizeof(prefix) - 1)
+        pn = (int)sizeof(prefix) - 1;
     size_t n = min((size_t)pn, sizeof(plaintext) - plen);
-    memcpy(plaintext + plen, prefix, n); plen += n;
+    memcpy(plaintext + plen, prefix, n);
+    plen += n;
     n = min((size_t)msg.length(), sizeof(plaintext) - plen);
-    memcpy(plaintext + plen, msg.c_str(), n); plen += n;
+    memcpy(plaintext + plen, msg.c_str(), n);
+    plen += n;
 
     return encryptGroupText(channels[chIdx].secret, enc, plaintext, plen);
 }
 
-int buildGroupFrameFlood(int chIdx, const String& msg, uint8_t* frame, int maxlen,
-                         uint32_t* outTs, uint32_t msgTs) {
+int buildGroupFrameFlood(int chIdx, const String &msg, uint8_t *frame, int maxlen, uint32_t *outTs, uint32_t msgTs) {
     uint8_t enc[GROUP_TEXT_MAX_PLAIN + 2];
     int enclen = buildGroupEnc(chIdx, msg, enc, outTs, msgTs);
-    if (enclen <= 0 || 3 + enclen > maxlen) return 0;
-    frame[0] = 0x15;                    // GRP_TXT | ROUTE_TYPE_FLOOD
-    frame[1] = PATH_LEN_INIT;           // размер хэша, 0 хопов (путь достроят ретрансляторы)
+    if (enclen <= 0 || 3 + enclen > maxlen)
+        return 0;
+    frame[0] = 0x15;          // GRP_TXT | ROUTE_TYPE_FLOOD
+    frame[1] = PATH_LEN_INIT; // размер хэша, 0 хопов (путь достроят ретрансляторы)
     frame[2] = channels[chIdx].hash;
     memcpy(frame + 3, enc, enclen);
     return 3 + enclen;
 }
 
-int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
-                          const String& msg, uint8_t* frame, int maxlen,
-                          uint8_t* expectedAck4, uint32_t msgTs, uint8_t attempt,
-                          uint8_t txtType) {
+int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t *dest_pub, const String &msg, uint8_t *frame, int maxlen,
+                          uint8_t *expectedAck4, uint32_t msgTs, uint8_t attempt, uint8_t txtType) {
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
 
@@ -133,33 +147,38 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
     // приложение показывает сообщение в переписке и отличает повтор от нового, а получатель
     // считает по ним хэш подтверждения. Узел (ответ на чужую личку) своей метки не несёт —
     // для него msgTs == 0, и берём часы узла, как раньше.
-    uint32_t ts = (msgTs != 0) ? msgTs : (uint32_t)time(NULL);   // Unix-секунды
-    memcpy(data, &ts, 4); dlen += 4;
+    uint32_t ts = (msgTs != 0) ? msgTs : (uint32_t)time(NULL); // Unix-секунды
+    memcpy(data, &ts, 4);
+    dlen += 4;
     // Байт флагов: в старших шести битах тип текста, в младших двух — номер попытки. Тип
     // обязан уехать в эфир: 1 означает КОМАНДНУЮ СТРОКУ, и именно по нему ретранслятор
     // понимает, что пришла команда, а не беседа. Пока здесь был прибит ноль, управлять
     // чужим ретранслятором из приложения было нельзя — он читал команды как текст.
     data[dlen++] = (uint8_t)(((txtType & 0x3F) << 2) | (attempt & 3));
     size_t ml = min((size_t)DM_TEXT_MAX, (size_t)msg.length());
-    memcpy(data + dlen, msg.c_str(), ml); dlen += ml;
-    data[dlen++] = 0;                        // null terminator
+    memcpy(data + dlen, msg.c_str(), ml);
+    dlen += ml;
+    data[dlen++] = 0; // null terminator
 
     // Хэш подтверждения, которое получатель пришлёт на это сообщение: по открытому тексту
     // ДО завершающего нуля и по НАШЕМУ публичному ключу. Ровно так его считает получатель
     // (dmAckSend), только ключ берёт из своего кэша. Считаем до шифрования: шифротекст тут
     // не участвует.
-    if (expectedAck4) sha256Trunc(expectedAck4, 4, data, 5 + (int)ml, bot_pub, 32);
+    if (expectedAck4)
+        sha256Trunc(expectedAck4, 4, data, 5 + (int)ml, bot_pub, 32);
 
-    uint8_t enc[DM_TEXT_MAX + 24];           // MAC 2 + шифр, дополненный до кратного 16
-    int enclen = encryptGroupText(secret, enc, data, dlen);   // [MAC 2B][cipher]
-    if (enclen <= 0 || 4 + enclen > maxlen) return 0;
+    uint8_t enc[DM_TEXT_MAX + 24];                          // MAC 2 + шифр, дополненный до кратного 16
+    int enclen = encryptGroupText(secret, enc, data, dlen); // [MAC 2B][cipher]
+    if (enclen <= 0 || 4 + enclen > maxlen)
+        return 0;
 
     int f = 0;
-    frame[f++] = 0x09;                       // TXT_MSG | ROUTE_TYPE_FLOOD
-    frame[f++] = PATH_LEN_INIT;              // размер хэша, 0 хопов
+    frame[f++] = 0x09;          // TXT_MSG | ROUTE_TYPE_FLOOD
+    frame[f++] = PATH_LEN_INIT; // размер хэша, 0 хопов
     frame[f++] = dest_hash;
     frame[f++] = ownShortHash;
-    memcpy(frame + f, enc, enclen); f += enclen;
+    memcpy(frame + f, enc, enclen);
+    f += enclen;
     return f;
 }
 
@@ -171,30 +190,37 @@ int buildPrivateTextFrame(uint8_t dest_hash, const uint8_t* dest_pub,
 //
 // Содержимое: [время 4][пароль до 15 знаков]. Время — и метка запроса (ответ придёт с ней
 // же), и то, что делает хэш пакета неповторимым.
-int buildLoginFrame(uint8_t dest_hash, const uint8_t* dest_pub, const char* password,
-                    uint32_t* outTag, uint8_t* frame, int maxlen) {
+int buildLoginFrame(uint8_t dest_hash, const uint8_t *dest_pub, const char *password, uint32_t *outTag, uint8_t *frame,
+                    int maxlen) {
     uint8_t data[4 + LOGIN_PASSWORD_MAX];
     int dlen = 0;
     const uint32_t now = (uint32_t)time(NULL);
     const uint32_t tag = (now > 1000000000) ? now : (uint32_t)millis();
-    memcpy(data, &tag, 4); dlen += 4;
-    if (outTag) *outTag = tag;
+    memcpy(data, &tag, 4);
+    dlen += 4;
+    if (outTag)
+        *outTag = tag;
     size_t pl = password ? strlen(password) : 0;
-    if (pl > LOGIN_PASSWORD_MAX) pl = LOGIN_PASSWORD_MAX;   // длиннее оригинал не принимает
-    memcpy(data + dlen, password, pl); dlen += (int)pl;
+    if (pl > LOGIN_PASSWORD_MAX)
+        pl = LOGIN_PASSWORD_MAX; // длиннее оригинал не принимает
+    memcpy(data + dlen, password, pl);
+    dlen += (int)pl;
 
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
     uint8_t enc[4 + LOGIN_PASSWORD_MAX + 24];
     const int enclen = encryptGroupText(secret, enc, data, dlen);
-    if (enclen <= 0 || 2 + 1 + 32 + enclen > maxlen) return 0;
+    if (enclen <= 0 || 2 + 1 + 32 + enclen > maxlen)
+        return 0;
 
     int f = 0;
     frame[f++] = (uint8_t)((PAYLOAD_TYPE_ANON_REQ << 2) | ROUTE_TYPE_FLOOD);
     frame[f++] = PATH_LEN_INIT;
     frame[f++] = dest_hash;
-    memcpy(frame + f, bot_pub, 32); f += 32;      // наш ключ целиком, а не короткий хэш
-    memcpy(frame + f, enc, enclen); f += enclen;
+    memcpy(frame + f, bot_pub, 32);
+    f += 32; // наш ключ целиком, а не короткий хэш
+    memcpy(frame + f, enc, enclen);
+    f += enclen;
     return f;
 }
 
@@ -207,45 +233,52 @@ int buildLoginFrame(uint8_t dest_hash, const uint8_t* dest_pub, const char* pass
 // «кому этот ответ» можно только по ней. Поэтому же она обязана быть уникальной — берём
 // время с подмешанным случайным хвостом, иначе два запроса подряд в одну секунду дадут
 // одинаковую метку, а дедуп сочтёт второй кадр копией первого.
-int buildReqFrame(uint8_t dest_hash, const uint8_t* dest_pub,
-                  const uint8_t* reqData, int reqLen,
-                  uint32_t* outTag, uint8_t* frame, int maxlen) {
-    if (reqLen < 0 || reqLen > 64) return 0;
+int buildReqFrame(uint8_t dest_hash, const uint8_t *dest_pub, const uint8_t *reqData, int reqLen, uint32_t *outTag,
+                  uint8_t *frame, int maxlen) {
+    if (reqLen < 0 || reqLen > 64)
+        return 0;
     uint8_t data[4 + 64];
     int dlen = 0;
     const uint32_t now = (uint32_t)time(NULL);
     uint32_t tag = (now > 1000000000) ? now : (uint32_t)millis();
     static uint32_t lastTag = 0;
-    if (tag == lastTag) tag++;                    // две метки в одну секунду не повторяем
+    if (tag == lastTag)
+        tag++; // две метки в одну секунду не повторяем
     lastTag = tag;
-    memcpy(data, &tag, 4); dlen += 4;
-    if (outTag) *outTag = tag;
-    memcpy(data + dlen, reqData, reqLen); dlen += reqLen;
+    memcpy(data, &tag, 4);
+    dlen += 4;
+    if (outTag)
+        *outTag = tag;
+    memcpy(data + dlen, reqData, reqLen);
+    dlen += reqLen;
 
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
     uint8_t enc[4 + 64 + 24];
     const int enclen = encryptGroupText(secret, enc, data, dlen);
-    if (enclen <= 0 || 4 + enclen > maxlen) return 0;
+    if (enclen <= 0 || 4 + enclen > maxlen)
+        return 0;
 
     int f = 0;
     frame[f++] = (uint8_t)((PAYLOAD_TYPE_REQ << 2) | ROUTE_TYPE_FLOOD);
     frame[f++] = PATH_LEN_INIT;
     frame[f++] = dest_hash;
     frame[f++] = ownShortHash;
-    memcpy(frame + f, enc, enclen); f += enclen;
+    memcpy(frame + f, enc, enclen);
+    f += enclen;
     return f;
 }
 
 // Простой запрос одного типа: [тип 1][резерв 4][случайные 4]. Раскладку диктует оригинал
 // (BaseChatMesh::sendRequest с req_type), случайный хвост — чтобы два одинаковых запроса
 // не совпали побайтово и второй не выпал в дедупе.
-int buildSimpleReqFrame(uint8_t dest_hash, const uint8_t* dest_pub, uint8_t reqType,
-                        uint32_t* outTag, uint8_t* frame, int maxlen) {
+int buildSimpleReqFrame(uint8_t dest_hash, const uint8_t *dest_pub, uint8_t reqType, uint32_t *outTag, uint8_t *frame,
+                        int maxlen) {
     uint8_t body[9];
     body[0] = reqType;
     memset(&body[1], 0, 4);
-    for (int i = 0; i < 4; i++) body[5 + i] = (uint8_t)random(0, 256);
+    for (int i = 0; i < 4; i++)
+        body[5 + i] = (uint8_t)random(0, 256);
     return buildReqFrame(dest_hash, dest_pub, body, (int)sizeof(body), outTag, frame, maxlen);
 }
 
@@ -256,53 +289,59 @@ int buildSimpleReqFrame(uint8_t dest_hash, const uint8_t* dest_pub, uint8_t reqT
 // Довеском идёт подтверждение доставки: оригинал кладёт его сюда ровно затем, чтобы не
 // слать два пакета подряд. Без довеска туда пишется 0xFF и четыре случайных байта — иначе
 // два возврата одного и того же маршрута совпали бы побайтово, и второй отбросил бы дедуп.
-int buildPathReturnFrame(uint8_t dest_hash, const uint8_t* dest_pub,
-                         uint8_t pathLen, const uint8_t* path,
-                         uint8_t extraType, const uint8_t* extra, int extraLen,
-                         uint8_t* frame, int maxlen) {
+int buildPathReturnFrame(uint8_t dest_hash, const uint8_t *dest_pub, uint8_t pathLen, const uint8_t *path,
+                         uint8_t extraType, const uint8_t *extra, int extraLen, uint8_t *frame, int maxlen) {
     const uint8_t hsize = (pathLen >> 6) + 1;
     const uint8_t hops = pathLen & 0x3F;
     const int pathBytes = (int)hops * hsize;
 
     uint8_t data[GROUP_TEXT_MAX];
     int dlen = 0;
-    if (1 + pathBytes + 1 + (extraLen > 0 ? extraLen : 4) > (int)sizeof(data)) return 0;
+    if (1 + pathBytes + 1 + (extraLen > 0 ? extraLen : 4) > (int)sizeof(data))
+        return 0;
     data[dlen++] = pathLen;
-    memcpy(data + dlen, path, pathBytes); dlen += pathBytes;
+    memcpy(data + dlen, path, pathBytes);
+    dlen += pathBytes;
     if (extraLen > 0) {
         data[dlen++] = extraType;
-        memcpy(data + dlen, extra, extraLen); dlen += extraLen;
+        memcpy(data + dlen, extra, extraLen);
+        dlen += extraLen;
     } else {
-        data[dlen++] = 0xFF;                       // довеска нет
-        for (int i = 0; i < 4; i++) data[dlen++] = (uint8_t)random(0, 256);
+        data[dlen++] = 0xFF; // довеска нет
+        for (int i = 0; i < 4; i++)
+            data[dlen++] = (uint8_t)random(0, 256);
     }
 
     uint8_t secret[32];
     ed25519_key_exchange(secret, dest_pub, bot_prv64);
     uint8_t enc[GROUP_TEXT_MAX + 24];
     const int enclen = encryptGroupText(secret, enc, data, dlen);
-    if (enclen <= 0 || 4 + enclen > maxlen) return 0;
+    if (enclen <= 0 || 4 + enclen > maxlen)
+        return 0;
 
     int f = 0;
     frame[f++] = (uint8_t)((PAYLOAD_TYPE_PATH << 2) | ROUTE_TYPE_FLOOD);
     frame[f++] = PATH_LEN_INIT;
     frame[f++] = dest_hash;
     frame[f++] = ownShortHash;
-    memcpy(frame + f, enc, enclen); f += enclen;
+    memcpy(frame + f, enc, enclen);
+    f += enclen;
     return f;
 }
 
-int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
-    if (chIdx < 0 || chIdx >= numChannels) return RADIOLIB_ERR_UNKNOWN;
+int sendFrame(int chIdx, const uint8_t *frame, int f, bool logHex) {
+    if (chIdx < 0 || chIdx >= numChannels)
+        return RADIOLIB_ERR_UNKNOWN;
     // hex-лог кадра стоит ~40 мс на UART для 245-байтного кадра — в fast-режиме молчим.
     // Копии флуда побайтово одинаковы, поэтому кадр печатается один раз на сообщение
     // (floodSend вызывает это с logHex только для первой копии): три копии давали три
     // одинаковых дампа, а UART на 115200 не успевает и это само по себе тормозит отправку.
     if (logHex && !otaFastMode) {
-        for (int i = 0; i < f; i++) Serial.printf("%02X", frame[i]);
+        for (int i = 0; i < f; i++)
+            Serial.printf("%02X", frame[i]);
         Serial.println();
     }
-    return txFrame((uint8_t*)frame, f);
+    return txFrame((uint8_t *)frame, f);
 }
 
 // ===== Очередь копий флуда =====
@@ -323,10 +362,10 @@ int sendFrame(int chIdx, const uint8_t* frame, int f, bool logHex) {
 #endif
 
 static struct {
-    unsigned long dueMs;        // 0 — слот свободен
+    unsigned long dueMs; // 0 — слот свободен
     int chIdx;
     int len;
-    bool firstCopy;             // эта копия ещё НИ РАЗУ не уходила в эфир
+    bool firstCopy; // эта копия ещё НИ РАЗУ не уходила в эфир
     uint8_t frame[256];
 } floodQ[FLOOD_TX_QUEUE_MAX];
 
@@ -335,7 +374,9 @@ static struct {
 // отдавать эфир или копит.
 int meshTxQueuedCount() {
     int n = 0;
-    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) if (floodQ[i].dueMs != 0) n++;
+    for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++)
+        if (floodQ[i].dueMs != 0)
+            n++;
     return n;
 }
 
@@ -354,14 +395,16 @@ static uint32_t floodUnsentDrops = 0;
 void meshTxDropQueued() {
     uint32_t unsent = 0;
     for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
-        if (floodQ[i].dueMs != 0 && floodQ[i].firstCopy) unsent++;
+        if (floodQ[i].dueMs != 0 && floodQ[i].firstCopy)
+            unsent++;
         floodQ[i].dueMs = 0;
     }
     if (unsent) {
         floodUnsentDrops += unsent;
-        Serial.printf("[TX] уход на быстрый канал: потеряно %lu ни разу не отправленных "
-                      "сообщений (всего %lu)\n",
-                      (unsigned long)unsent, (unsigned long)floodUnsentDrops);
+        Serial.printf(
+            "[TX] уход на быстрый канал: потеряно %lu ни разу не отправленных "
+            "сообщений (всего %lu)\n",
+            (unsigned long)unsent, (unsigned long)floodUnsentDrops);
     }
 }
 
@@ -370,28 +413,39 @@ void meshTxDropQueued() {
 // остановку цикла, от которой очередь и заведена (так же устроен meshRelayTick).
 void meshTxTick() {
     // На быстром канале копии не нужны и вредны: там FSK и другой кадр.
-    if (otaFastMode) { meshTxDropQueued(); return; }
+    if (otaFastMode) {
+        meshTxDropQueued();
+        return;
+    }
     const unsigned long now = millis();
     int best = -1;
     long bestLate = -1;
     for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
-        if (floodQ[i].dueMs == 0) continue;
+        if (floodQ[i].dueMs == 0)
+            continue;
         const long late = (long)(now - floodQ[i].dueMs);
-        if (late < 0) continue;
-        if (late > bestLate) { bestLate = late; best = i; }
+        if (late < 0)
+            continue;
+        if (late > bestLate) {
+            bestLate = late;
+            best = i;
+        }
     }
-    if (best < 0) return;
+    if (best < 0)
+        return;
     const int ch = floodQ[best].chIdx;
     floodQ[best].dueMs = 0;
-    if (ch >= 0) sendFrame(ch, floodQ[best].frame, floodQ[best].len, false);
-    else         txFrame(floodQ[best].frame, floodQ[best].len);
+    if (ch >= 0)
+        sendFrame(ch, floodQ[best].frame, floodQ[best].len, false);
+    else
+        txFrame(floodQ[best].frame, floodQ[best].len);
 }
 
-static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long dueMs,
-                           bool firstCopy) {
+static bool floodQueueCopy(int chIdx, const uint8_t *frame, int f, unsigned long dueMs, bool firstCopy) {
     for (int i = 0; i < FLOOD_TX_QUEUE_MAX; i++) {
-        if (floodQ[i].dueMs != 0) continue;
-        floodQ[i].dueMs = dueMs ? dueMs : 1;   // 0 занято признаком «свободен»
+        if (floodQ[i].dueMs != 0)
+            continue;
+        floodQ[i].dueMs = dueMs ? dueMs : 1; // 0 занято признаком «свободен»
         floodQ[i].chIdx = chIdx;
         floodQ[i].len = f;
         floodQ[i].firstCopy = firstCopy;
@@ -403,9 +457,9 @@ static bool floodQueueCopy(int chIdx, const uint8_t* frame, int f, unsigned long
 
 // Общая часть обеих отправок. inlineFirst решает, уходит первая копия прямо здесь или тоже
 // ждёт тика: разница в том, блокирует ли вызывающий код главный цикл на время передачи.
-static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs,
-                          int repeats, bool inlineFirst) {
-    markOwnFrameSeen(frame, f);   // своё эхо, вернувшееся через ретрансляторов, не переиздавать
+static void floodSendImpl(int chIdx, const uint8_t *frame, int f, unsigned int gapBaseMs, int repeats,
+                          bool inlineFirst) {
+    markOwnFrameSeen(frame, f); // своё эхо, вернувшееся через ретрансляторов, не переиздавать
     // База паузы по умолчанию — время ЭТОГО кадра в эфире, а не общая константа. Так же
     // устроено у оригинального MeshCore: там задержка повтора выводится из
     // getEstAirtimeFor() пакета. Причина простая: на наших настройках кадр 16 Б висит в
@@ -415,16 +469,21 @@ static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int g
     //
     // Ноль по-прежнему означает «решай сам»; floodGapMs зажмёт базу в [FLOOD_RETRY_MIN_MS,
     // FLOOD_RETRY_MAX_MS] и добавит разброс.
-    if (gapBaseMs == 0) gapBaseMs = radioAirtimeMs(f);
+    if (gapBaseMs == 0)
+        gapBaseMs = radioAirtimeMs(f);
     unsigned long firstDue = millis();
     if (inlineFirst) {
         // Первая копия уходит здесь же: обычная отправка не должна ждать тика.
-        if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
-        else            txFrame((uint8_t*)frame, f);
+        if (chIdx >= 0)
+            sendFrame(chIdx, frame, f, true);
+        else
+            txFrame((uint8_t *)frame, f);
     } else if (!floodQueueCopy(chIdx, frame, f, firstDue, true)) {
         // Очередь занята — отправляем сразу, иначе сообщение потеряется совсем.
-        if (chIdx >= 0) sendFrame(chIdx, frame, f, true);
-        else            txFrame((uint8_t*)frame, f);
+        if (chIdx >= 0)
+            sendFrame(chIdx, frame, f, true);
+        else
+            txFrame((uint8_t *)frame, f);
     }
 
     // Остальные — в очередь, каждая со своим сроком. Пауза перед следующей копией набирается
@@ -434,19 +493,22 @@ static void floodSendImpl(int chIdx, const uint8_t* frame, int f, unsigned int g
     unsigned long due = firstDue;
     for (int i = 1; i < repeats; i++) {
         due += floodGapMs(gapBaseMs);
-        if (floodQueueCopy(chIdx, frame, f, due, false)) continue;
+        if (floodQueueCopy(chIdx, frame, f, due, false))
+            continue;
         // Очередь занята. Доставка важнее отзывчивости: досылаем остаток по-старому, с
         // блокирующей паузой, и считаем это — если такое случается часто, слотов мало.
         floodQueueDrops++;
-        Serial.printf("[TX] очередь копий занята — досылаю %d-ю блокирующе (всего %lu)\n",
-                      i + 1, (unsigned long)floodQueueDrops);
+        Serial.printf("[TX] очередь копий занята — досылаю %d-ю блокирующе (всего %lu)\n", i + 1,
+                      (unsigned long)floodQueueDrops);
         delay(floodGapMs(gapBaseMs));
-        if (chIdx >= 0) sendFrame(chIdx, frame, f, false);
-        else            txFrame((uint8_t*)frame, f);
+        if (chIdx >= 0)
+            sendFrame(chIdx, frame, f, false);
+        else
+            txFrame((uint8_t *)frame, f);
     }
 }
 
-void sensorSendMsg(const char* msg, unsigned int gapBaseMs, int repeats) {
+void sensorSendMsg(const char *msg, unsigned int gapBaseMs, int repeats) {
     if (sensorChannelIdx < 0) {
         Serial.printf("[SNS] sensor channel not configured, cannot send \"%s\"\n", msg);
         return;
@@ -454,19 +516,19 @@ void sensorSendMsg(const char* msg, unsigned int gapBaseMs, int repeats) {
     uint8_t frame[256];
     uint32_t senderTs = 0;
     int f = buildGroupFrameFlood(sensorChannelIdx, msg, frame, sizeof(frame), &senderTs);
-    if (f <= 0) return;
+    if (f <= 0)
+        return;
     floodSend(-1, frame, f, gapBaseMs, repeats);
     Serial.printf("[SNS] sent \"%s\" to sensor channel\n", msg);
     // Собственные передачи в приложение иначе не попадают: в очередь кладётся только
     // принятое из эфира, а свой же флуд отбрасывается как эхо. Кладём прямо здесь, с тем
     // же префиксом имени и той же МЕТКОЙ ОТПРАВИТЕЛЯ, с какими сообщение ушло в эфир:
     // приложение сопоставляет очередь с сырым журналом 0x88 именно по этой метке.
-    companionOnChannelText(sensorChannelIdx, cfg.name + ": " + msg, 0.0f, PATH_LEN_INIT,
-                           senderTs, false);
-    #ifdef SENSOR_NODE
+    companionOnChannelText(sensorChannelIdx, cfg.name + ": " + msg, 0.0f, PATH_LEN_INIT, senderTs, false);
+#ifdef SENSOR_NODE
     sensorLastSent = msg;
     sensorLastSentMs = millis();
-    #endif
+#endif
 }
 
 // "time:<epoch>:<версия бота>" — сенсор выставляет часы и сверяет свою версию с ботом
@@ -479,17 +541,17 @@ void sensorSendHello() {
     // живут на одной h43, а образы у них разные. Два поля об одном и том же значат, что
     // однажды они разойдутся.
     char msg[96];
-    #if HAS_BATTERY
+#if HAS_BATTERY
     if (mcBatteryPresent()) {
         char bv[12];
-        snprintf(msg, sizeof(msg), "%s:%s:%d:%s:%s", SENSOR_MSG_HELLO, FW_VERSION,
-                 mcBatteryPercent(), fmtFix(mcBatteryVoltage(), 2, bv, sizeof(bv)), FW_ENV);
+        snprintf(msg, sizeof(msg), "%s:%s:%d:%s:%s", SENSOR_MSG_HELLO, FW_VERSION, mcBatteryPercent(),
+                 fmtFix(mcBatteryVoltage(), 2, bv, sizeof(bv)), FW_ENV);
     } else {
         snprintf(msg, sizeof(msg), "%s:%s:-:-:%s", SENSOR_MSG_HELLO, FW_VERSION, FW_ENV);
     }
-    #else
+#else
     snprintf(msg, sizeof(msg), "%s:%s:-:-:%s", SENSOR_MSG_HELLO, FW_VERSION, FW_ENV);
-    #endif
+#endif
     // Координаты — пятым и шестым полями, и ТОЛЬКО когда решение есть. Без фикса поля не
     // дописываются вовсе: у координатора в MQTT остаётся последняя известная точка (топики
     // retained), а узлы без приёмника шлют ровно ту же строку, что и раньше. Откуда взять
@@ -498,8 +560,7 @@ void sensorSendHello() {
     if (mcBoardPosition(&lat, &lon)) {
         char la[16], lo[16];
         size_t n = strlen(msg);
-        snprintf(msg + n, sizeof(msg) - n, ":%s:%s",
-                 fmtUdeg(lat, la, sizeof(la)), fmtUdeg(lon, lo, sizeof(lo)));
+        snprintf(msg + n, sizeof(msg) - n, ":%s:%s", fmtUdeg(lat, la, sizeof(la)), fmtUdeg(lon, lo, sizeof(lo)));
     }
     sensorSendMsg(msg);
 }
@@ -508,7 +569,7 @@ void sensorSendHello() {
 
 #ifdef SENSOR_NODE
 // Эхо-запрос: одиночная посылка, чтобы измерять время одного обмена, а не повторов
-void sensorSendMsgUnique(const char* prefix) {
+void sensorSendMsgUnique(const char *prefix) {
     // Сообщение, которое может дословно повториться (нажатие кнопки), уходит с номером
     // отправки. Без номера два одинаковых нажатия в одну секунду дают ПОБАЙТОВО одинаковый
     // кадр: время в кадре хранится с точностью до секунды, а шифрование — ECB без nonce,
@@ -520,14 +581,16 @@ void sensorSendMsgUnique(const char* prefix) {
     // автоматизации, подписанные на это значение.
     static uint16_t seq = 0;
     seq++;
-    if (seq == 0) seq = 1;   // 0 — «номера нет»
+    if (seq == 0)
+        seq = 1; // 0 — «номера нет»
     char msg[64];
     snprintf(msg, sizeof(msg), "%s:%u", prefix, (unsigned)seq);
     sensorSendMsg(msg);
 }
 
 void sensorPingSend() {
-    if (sensorChannelIdx < 0) return;
+    if (sensorChannelIdx < 0)
+        return;
     // Номер запроса — счётчик, а не младшие байты millis(): те заворачиваются каждые ~65 с,
     // и «свежий» милисекундный номер совпадёт со старым ответом, застрявшим в эфире.
     static uint16_t pingSeq = 1;
@@ -538,7 +601,8 @@ void sensorPingSend() {
     char msg[24];
     snprintf(msg, sizeof(msg), "%s%u", SENSOR_MSG_PING, (unsigned)pingId);
     pingSentMs = millis();
-    if (pingStatSent < 0xFFFF) pingStatSent++;
+    if (pingStatSent < 0xFFFF)
+        pingStatSent++;
     sensorSendMsg(msg, 0, 1);
 }
 
@@ -548,8 +612,7 @@ void pingModeToggle() {
         // Последняя выборка остаётся на экране: иначе выключение стирало бы то, ради чего
         // режим и включали.
         pingShowUntil = millis() + PING_SHOW_MS;
-        Serial.printf("[PING] режим выключен: ушло %u, потеряно %u\n",
-                      (unsigned)pingStatSent, (unsigned)pingStatLost);
+        Serial.printf("[PING] режим выключен: ушло %u, потеряно %u\n", (unsigned)pingStatSent, (unsigned)pingStatLost);
         return;
     }
     pingModeOn = true;
@@ -560,7 +623,7 @@ void pingModeToggle() {
     pingHopsSum = 0;
     pingFailed = false;
     pingShowUntil = 0;
-    pingModeNextMs = millis();   // первый запрос — сразу
+    pingModeNextMs = millis(); // первый запрос — сразу
     Serial.println("[PING] режим включён");
 }
 
@@ -572,11 +635,14 @@ void sensorPingTick() {
         pingFailed = true;
         // Вот теперь запрос действительно потерян: ждать его больше не будем, а следующий
         // уйдёт по расписанию. До этого момента он просто в пути.
-        if (pingStatLost < 0xFFFF) pingStatLost++;
-        if (!pingModeOn) pingShowUntil = millis() + PING_SHOW_MS;
+        if (pingStatLost < 0xFFFF)
+            pingStatLost++;
+        if (!pingModeOn)
+            pingShowUntil = millis() + PING_SHOW_MS;
         Serial.println("[PING] ответа нет");
     }
-    if (!pingModeOn) return;
+    if (!pingModeOn)
+        return;
     // «Включили и ушли»: режим сам выключится, не посадив аккумулятор.
     if (millis() - pingModeStartMs >= PING_MODE_MAX_MS) {
         Serial.println("[PING] предел режима — выключаю");
@@ -585,12 +651,16 @@ void sensorPingTick() {
     }
     // Во время прошивки по радио эфир занят чанками: запрос туда не полезет, расписание
     // сдвинется само.
-    if (otaActive) { pingModeNextMs = millis() + PING_MODE_INTERVAL_MS; return; }
-    if ((long)(millis() - pingModeNextMs) < 0) return;
+    if (otaActive) {
+        pingModeNextMs = millis() + PING_MODE_INTERVAL_MS;
+        return;
+    }
+    if ((long)(millis() - pingModeNextMs) < 0)
+        return;
     pingModeNextMs = millis() + PING_MODE_INTERVAL_MS;
-    #if HAS_OLED
-    screenWake();   // экран не должен уснуть посреди проверки — на него и смотрят
-    #endif
+#if HAS_OLED
+    screenWake(); // экран не должен уснуть посреди проверки — на него и смотрят
+#endif
     sensorPingSend();
 }
 #endif
@@ -604,7 +674,8 @@ void sendSensorTimeSync() {
 String channelListStr() {
     String s = "";
     for (int i = 0; i < numChannels; i++) {
-        if (i > 0) s += " + ";
+        if (i > 0)
+            s += " + ";
         s += channels[i].name;
     }
     return s;
@@ -616,12 +687,13 @@ String channelListStr() {
 //
 // Отдельного таймера для этого не заводим: очередь копий уже умеет «кадр и срок», и тик уже
 // отдаёт по одному кадру за проход. Второй механизм с тем же смыслом разъехался бы с этим.
-bool meshTxQueueFrame(const uint8_t* frame, int f, unsigned long delayMs) {
-    if (f <= 0 || f > 255) return false;
+bool meshTxQueueFrame(const uint8_t *frame, int f, unsigned long delayMs) {
+    if (f <= 0 || f > 255)
+        return false;
     return floodQueueCopy(-1, frame, f, millis() + delayMs, true);
 }
 
-void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, int repeats) {
+void floodSend(int chIdx, const uint8_t *frame, int f, unsigned int gapBaseMs, int repeats) {
     floodSendImpl(chIdx, frame, f, gapBaseMs, repeats, true);
 }
 
@@ -636,7 +708,6 @@ void floodSend(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs, i
 // немедленно, а эфиром занимается диспетчер.
 //
 // Первая копия уйдёт с ближайшего meshTxTick(), то есть через один проход цикла.
-void floodSendQueued(int chIdx, const uint8_t* frame, int f, unsigned int gapBaseMs,
-                     int repeats) {
+void floodSendQueued(int chIdx, const uint8_t *frame, int f, unsigned int gapBaseMs, int repeats) {
     floodSendImpl(chIdx, frame, f, gapBaseMs, repeats, false);
 }

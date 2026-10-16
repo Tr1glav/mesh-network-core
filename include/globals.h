@@ -21,7 +21,7 @@ extern bool sensorDiscPublished[SENSOR_DEV_CACHE_MAX];
 // точка на карте, которая никогда не обновится.
 extern bool sensorPosPublished[SENSOR_DEV_CACHE_MAX];
 extern String sensorFwVersion[SENSOR_DEV_CACHE_MAX];
-extern String sensorEnv[SENSOR_DEV_CACHE_MAX];   // окружение сборки из hello
+extern String sensorEnv[SENSOR_DEV_CACHE_MAX]; // окружение сборки из hello
 extern int sensorBattery[SENSOR_DEV_CACHE_MAX];
 extern float sensorRssi[SENSOR_DEV_CACHE_MAX];
 // Через сколько ретрансляторов пришёл последний пакет от узла, ПРИНЯТЫЙ НАМИ ИЗ ЭФИРА.
@@ -59,16 +59,16 @@ struct SupportNode {
     // ответ будет точнее, чем запомненный с прошлого раза.
     String ver;
     String env;
-    unsigned long infoMs;     // когда последний раз спрашивали /info
+    unsigned long infoMs; // когда последний раз спрашивали /info
 };
 extern SupportNode supports[SUPPORT_MAX];
 extern int supportCount;
 
 // Объявление из эфира: добавляет запись или обновляет существующую (ключ — имя узла).
 // Реестр полон — вытесняется тот, кто дольше всех молчит. Возвращает индекс.
-int supportSeen(const String& name, const String& ip);
+int supportSeen(const String &name, const String &ip);
 // Индекс по имени, или -1. Заодно отвечает на вопрос «эта цель — сам прошивальщик?».
-int supportFind(const String& name);
+int supportFind(const String &name);
 // Жива ли запись: объявлялся не дольше SUPPORT_STALE_MS назад и адрес у него есть.
 bool supportLive(int idx);
 
@@ -99,7 +99,7 @@ extern uint32_t otaSlowAcked;       // сколько чанков подтве�
 // Кому передана текущая сессия; пусто — ведём сами. Пока не пусто, страница координатора
 // показывает ход сессии, спрашивая его у прошивальщика.
 extern String otaDelegate;
-extern unsigned long otaDelegateMs;   // когда передали: до старта он ещё в фазе 0
+extern unsigned long otaDelegateMs; // когда передали: до старта он ещё в фазе 0
 // Сообщение о том, ЧТО ПРОИЗОШЛО, а не о том, что сломалось. Раньше такие сообщения
 // клались в otaLastErr — и страница честно показывала «Ошибка: сессию ведёт ...» на
 // успешно идущей прошивке.
@@ -128,8 +128,8 @@ struct SensorHello {
 };
 #if FEATURE_MESH_OTA_SENDER || FEATURE_MQTT
 extern SensorHello lastHello;
-extern int lastSensorIdx;            // запись отправителя в реестре
-extern bool lastSensorCameOnline;    // ...и он только что вернулся на связь
+extern int lastSensorIdx;         // запись отправителя в реестре
+extern bool lastSensorCameOnline; // ...и он только что вернулся на связь
 #endif
 
 // Кадр пришёл не из эфира, а через форвард «вторых ушей» (MESH_RX_FORWARDED): RSSI/SNR —
@@ -147,7 +147,7 @@ extern unsigned long lastDirectAdvertMs;
 extern unsigned long lastFloodAdvertMs;
 extern bool advertBootSent;
 extern bool otaFastMode;
-extern volatile bool otaRawDidTx;   // rawTxFrame выставляет = true; main сбрасывает перед otaHandleRawFrame
+extern volatile bool otaRawDidTx; // rawTxFrame выставляет = true; main сбрасывает перед otaHandleRawFrame
 extern unsigned long lastReArmMs;
 extern uint32_t fastRxFrames;
 extern uint32_t fastRxErrors;
@@ -156,24 +156,24 @@ extern int seen_next_idx;
 extern uint8_t seen_advert_hashes[SEEN_ADVERT_HASH_COUNT * SEEN_HASH_SIZE];
 extern int seen_advert_next_idx;
 extern uint32_t duplicateCount;
-extern uint32_t relayForwardedCount;   // чужих флуд-кадров, переизданных этим узлом
+extern uint32_t relayForwardedCount; // чужих флуд-кадров, переизданных этим узлом
 
 // Счётчики потерь. «Ненадёжно ходят» — это шесть разных причин с разными лекарствами, и
 // по одному «не дошло» непонятно, какая из них. Эти счётчики показывают, где именно:
 // нули везде — дело в приёме у адресата, ненулевой cadGiveUps — канал был занят так, что
 // мы передали поверх, и так далее.
-extern uint32_t cadGiveUps;        // передали, не дождавшись тишины в канале
-extern uint32_t relayQueueDrops;   // очередь переизданий была полна, кадр не переиздан
-extern uint32_t replyDropped;      // запрос требовал ответа, а предыдущий ещё не ушёл
-extern uint32_t replyDeferred;     // ответ сдвинут из-за идущей медленной прошивки
-extern uint32_t dmNoPubkey;        // не нашли публичный ключ: advert узла до нас не дошёл
+extern uint32_t cadGiveUps;      // передали, не дождавшись тишины в канале
+extern uint32_t relayQueueDrops; // очередь переизданий была полна, кадр не переиздан
+extern uint32_t replyDropped;    // запрос требовал ответа, а предыдущий ещё не ушёл
+extern uint32_t replyDeferred;   // ответ сдвинут из-за идущей медленной прошивки
+extern uint32_t dmNoPubkey;      // не нашли публичный ключ: advert узла до нас не дошёл
 // Подтверждения доставки личных сообщений: сколько отправили и сколько не смогли поставить в
 // очередь. Второй счётчик нужен затем, чтобы «подтверждение не дошло» не путали с «его и не
 // отправляли»: это разные поломки и чинятся по-разному.
 extern uint32_t ackSentCount;
 extern uint32_t ackQueueFull;
 extern uint32_t ackRecvCount;
-extern uint32_t framesSentCount;   // всего копий ушло в эфир
+extern uint32_t framesSentCount; // всего копий ушло в эфир
 // Метрики эфира: расчётное время наших передач и принятых кадров, кадры с битым CRC и
 // разбивка приёма на флуд и направленный. Их показывает приложение и по ним считается
 // занятость эфира.
@@ -197,14 +197,14 @@ extern uint32_t recvDirectCount;
 // и heartbeat, пинг и личку не обслуживает (это решение, а не недоделка, см. mesh_rx.cpp).
 // Поэтому у сенсора, у прошивальщика и у T-Deck этих счётчиков нет вовсе.
 #ifdef SENSOR_NODE
-  #define MESH_HAS_REPLY_QUEUE 0
+#define MESH_HAS_REPLY_QUEUE 0
 #else
-  #define MESH_HAS_REPLY_QUEUE 1
+#define MESH_HAS_REPLY_QUEUE 1
 #endif
 // relayQueueDrops растёт только в очереди переизданий, а она за FEATURE_RELAY.
 #define MESH_HAS_RELAY_QUEUE FEATURE_RELAY
 extern String logTail;
-extern const char fwMarker[];   // FW_MARKER, зашит в образ для проверки платы
+extern const char fwMarker[]; // FW_MARKER, зашит в образ для проверки платы
 
 // Индекс канала для команд снаружи: ядро выставляет его при разборе каналов, а кто читает
 // этот канал с другой стороны (брокер, приложение, что-то ещё), ядру безразлично.
@@ -240,7 +240,7 @@ extern uint32_t otaCrcExp;
 extern uint32_t otaCrcAcc;
 extern uint32_t otaSeqExp;
 extern unsigned long otaLastActivity;
-extern unsigned long otaAwaitEndMs;   // таймер «образ принят, жду DONE» (0 — не вошло)
+extern unsigned long otaAwaitEndMs; // таймер «образ принят, жду DONE» (0 — не вошло)
 extern String sensorLastSent;
 extern unsigned long sensorLastSentMs;
 extern unsigned long sensorHelloDueMs;
@@ -265,7 +265,7 @@ extern uint16_t pingStatRecv;         // на сколько пришёл отв
 // который ещё в пути, в такой разнице выглядел бы потерянным, и на экране мелькала бы
 // потеря, которой нет. Здесь потеря — это сработавший таймаут ожидания.
 extern uint16_t pingStatLost;
-extern unsigned long pingRttMin, pingRttMax, pingRttSum;   // разброс времени ответа
+extern unsigned long pingRttMin, pingRttMax, pingRttSum; // разброс времени ответа
 // Разброс числа ретрансляторов за сессию. Хопы скачут там, где маршрут неустойчив: ответ то
 // приходит напрямую, то через соседа, — и по одному последнему значению этого не видно.
 extern uint8_t pingHopsMin, pingHopsMax;

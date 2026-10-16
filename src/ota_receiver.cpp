@@ -17,14 +17,14 @@ extern "C" {
 #include "esp32s3/rom/miniz.h"
 }
 
-static uint32_t otaStreamLen = 0;        // байт в сжатом потоке
-static tinfl_decompressor* otaInfl = NULL;
-static uint8_t* otaDict = NULL;          // окно распаковки, оно же буфер вывода
+static uint32_t otaStreamLen = 0; // байт в сжатом потоке
+static tinfl_decompressor *otaInfl = NULL;
+static uint8_t *otaDict = NULL; // окно распаковки, оно же буфер вывода
 static size_t otaDictOfs = 0;
-static uint8_t otaWin[OTA_WINDOW][OTA_RAW_CHUNK_BYTES];   // слот = seq % OTA_WINDOW
+static uint8_t otaWin[OTA_WINDOW][OTA_RAW_CHUNK_BYTES]; // слот = seq % OTA_WINDOW
 static uint8_t otaWinLen[OTA_WINDOW];
-static uint16_t otaWinMask = 0;          // бит i: чанк otaSeqExp+i уже в окне
-static FwScan otaImgScan;                // маркер платы в распакованном образе
+static uint16_t otaWinMask = 0; // бит i: чанк otaSeqExp+i уже в окне
+static FwScan otaImgScan;       // маркер платы в распакованном образе
 
 static void otaZFree() {
     free(otaInfl);
@@ -33,12 +33,14 @@ static void otaZFree() {
     otaDict = NULL;
 }
 
-static bool otaWriteImage(const uint8_t* data, size_t n) {
+static bool otaWriteImage(const uint8_t *data, size_t n) {
     // Распаковщик может выдать больше объявленного: в конце потока он дополняет
     // последний блок. Лишнее в раздел не пишем, иначе Update.write упрётся в границу.
-    if (otaGot + n > otaTotal) n = otaTotal - otaGot;
-    if (n == 0) return true;
-    if (Update.write((uint8_t*)data, n) != n) {
+    if (otaGot + n > otaTotal)
+        n = otaTotal - otaGot;
+    if (n == 0)
+        return true;
+    if (Update.write((uint8_t *)data, n) != n) {
         Update.printError(Serial);
         return false;
     }
@@ -53,27 +55,31 @@ static bool otaWriteImage(const uint8_t* data, size_t n) {
 // придерживает хвост образа до следующей порции — которой уже не будет. Так терялись
 // последние байты (на образе 1106000 доходило 1103279), и приём падал с «size mismatch».
 static void otaSensorAckstart() {
-    if (sensorChannelIdx < 0) return;
+    if (sensorChannelIdx < 0)
+        return;
     uint8_t frame[256];
     int f = buildGroupFrameFlood(sensorChannelIdx, OTA_ACKSTART, frame, sizeof(frame));
-    if (f <= 0) return;
+    if (f <= 0)
+        return;
     // Бюджет рукопожатия посчитан для кадра не длиннее OTA_ACKSTART_FRAME_MAX: бот ждёт
     // OTA_FAST_SETTLE_MS и начинает слать пачку, а сенсор к этому моменту обязан успеть
     // договорить обе копии и переключить радио. Длина кадра зависит от имени узла, и с
     // длинным именем бюджет перестаёт сходиться. Отправку не отменяем — сессия нужна, — но
     // молчать нельзя: иначе сорванное рукопожатие выглядит как потеря в эфире.
     if (f > OTA_ACKSTART_FRAME_MAX) {
-        Serial.printf("[OTA] ackstart %d Б > бюджета %d Б: имя узла длинное, бот может начать "
-                      "пачку раньше, чем сенсор уйдёт на быстрый канал\n",
-                      f, (int)OTA_ACKSTART_FRAME_MAX);
+        Serial.printf(
+            "[OTA] ackstart %d Б > бюджета %d Б: имя узла длинное, бот может начать "
+            "пачку раньше, чем сенсор уйдёт на быстрый канал\n",
+            f, (int)OTA_ACKSTART_FRAME_MAX);
     }
     for (int i = 0; i < OTA_ACKSTART_COPIES; i++) {
-        if (i) delay(OTA_ACKSTART_GAP_MS);
+        if (i)
+            delay(OTA_ACKSTART_GAP_MS);
         sendFrame(sensorChannelIdx, frame, f, i == 0);
     }
 }
 
-static bool otaFeed(const uint8_t* in, size_t n, bool last) {
+static bool otaFeed(const uint8_t *in, size_t n, bool last) {
     for (;;) {
         size_t inBytes = n;
         size_t outBytes = TINFL_LZ_DICT_SIZE - otaDictOfs;
@@ -81,13 +87,15 @@ static bool otaFeed(const uint8_t* in, size_t n, bool last) {
                                            TINFL_FLAG_PARSE_ZLIB_HEADER | (last ? 0 : TINFL_FLAG_HAS_MORE_INPUT));
         in += inBytes;
         n -= inBytes;
-        if (outBytes > 0 && !otaWriteImage(otaDict + otaDictOfs, outBytes)) return false;
+        if (outBytes > 0 && !otaWriteImage(otaDict + otaDictOfs, outBytes))
+            return false;
         otaDictOfs = (otaDictOfs + outBytes) & (TINFL_LZ_DICT_SIZE - 1);
         if (st < 0) {
             Serial.printf("[OTA] inflate error %d\n", (int)st);
             return false;
         }
-        if (st == TINFL_STATUS_DONE || (n == 0 && st != TINFL_STATUS_HAS_MORE_OUTPUT)) return true;
+        if (st == TINFL_STATUS_DONE || (n == 0 && st != TINFL_STATUS_HAS_MORE_OUTPUT))
+            return true;
     }
 }
 
@@ -96,7 +104,8 @@ static bool otaFlushWindow() {
         uint8_t slot = otaSeqExp % OTA_WINDOW;
         uint32_t off = otaSeqExp * OTA_RAW_CHUNK_BYTES;
         bool last = (off + otaWinLen[slot] >= otaStreamLen);
-        if (!otaFeed(otaWin[slot], otaWinLen[slot], last)) return false;
+        if (!otaFeed(otaWin[slot], otaWinLen[slot], last))
+            return false;
         otaWinMask >>= 1;
         otaSeqExp++;
     }
@@ -104,31 +113,33 @@ static bool otaFlushWindow() {
 }
 
 static void otaSendWack() {
-    uint8_t mask[2] = { (uint8_t)otaWinMask, (uint8_t)(otaWinMask >> 8) };
+    uint8_t mask[2] = {(uint8_t)otaWinMask, (uint8_t)(otaWinMask >> 8)};
     uint8_t f[16];
     rawTxFrame(f, rawBuildFrame(f, RAW_TYPE_WACK, otaSeqExp, mask, 2));
 }
 
-static void otaRawFail(const char* why) {
+static void otaRawFail(const char *why) {
     // Причину кладём прямо в кадр. Раньше он уходил пустым, координатор писал в журнал
     // обобщённое «sensor fail», а настоящая причина (crc mismatch, end fail, write fail)
     // оставалась в консоли узла — к которому в рабочей сети обычно не подключиться.
     uint8_t f[48];
     size_t n = strnlen(why, 20);
-    rawTxFrame(f, rawBuildFrame(f, RAW_TYPE_FAIL, 0, (const uint8_t*)why, n));
+    rawTxFrame(f, rawBuildFrame(f, RAW_TYPE_FAIL, 0, (const uint8_t *)why, n));
     otaSensorAbort(why);
 }
 
 // Приём raw-фреймов на сенсоре (бот -> сенсор) во время чистой LoRa OTA
-void otaHandleRawSensor(const uint8_t* buf, int len) {
-    if (!otaActive) return;
-    if (len < 9 || buf[0] != RAW_MAGIC0 || buf[1] != RAW_MAGIC1) return;
+void otaHandleRawSensor(const uint8_t *buf, int len) {
+    if (!otaActive)
+        return;
+    if (len < 9 || buf[0] != RAW_MAGIC0 || buf[1] != RAW_MAGIC1)
+        return;
     int paylen = len - 2;
     uint16_t c = (uint16_t)(buf[len - 1] << 8) | buf[len - 2];
-    if (crc16buf(buf, paylen) != c) return;
+    if (crc16buf(buf, paylen) != c)
+        return;
     uint8_t type = buf[2];
-    uint32_t seq = (uint32_t)buf[3] | ((uint32_t)buf[4] << 8) |
-                   ((uint32_t)buf[5] << 16) | ((uint32_t)buf[6] << 24);
+    uint32_t seq = (uint32_t)buf[3] | ((uint32_t)buf[4] << 8) | ((uint32_t)buf[5] << 16) | ((uint32_t)buf[6] << 24);
 
     if (type == RAW_TYPE_ABORT) {
         otaSensorAbort("from bot");
@@ -136,19 +147,20 @@ void otaHandleRawSensor(const uint8_t* buf, int len) {
     }
 
     if (type == RAW_TYPE_DATA || type == RAW_TYPE_DATA_LAST) {
-        if (!otaGotStart) return;
+        if (!otaGotStart)
+            return;
         otaLastActivity = millis();
         // Фрейм: [magic 2B][type 1B][seq 4B][MAC 2B][ciphertext][crc16 2B]
         uint32_t i = seq - otaSeqExp;
         uint32_t off = seq * OTA_RAW_CHUNK_BYTES;
         int ct_len = len - 11;
-        if (seq >= otaSeqExp && i < OTA_WINDOW && !(otaWinMask & (1u << i)) && off < otaStreamLen &&
-            ct_len > 0 && ct_len % 16 == 0 && sensorChannelIdx >= 0) {
+        if (seq >= otaSeqExp && i < OTA_WINDOW && !(otaWinMask & (1u << i)) && off < otaStreamLen && ct_len > 0 &&
+            ct_len % 16 == 0 && sensorChannelIdx >= 0) {
             uint8_t slot = seq % OTA_WINDOW;
             // шифр дополнен до 16 байт — настоящую длину чанка даёт длина потока
             uint32_t need = min((uint32_t)OTA_RAW_CHUNK_BYTES, otaStreamLen - off);
-            int n = decryptRaw(channels[sensorChannelIdx].secret, &buf[7], &buf[9], ct_len,
-                               otaWin[slot], OTA_RAW_CHUNK_BYTES);
+            int n = decryptRaw(channels[sensorChannelIdx].secret, &buf[7], &buf[9], ct_len, otaWin[slot],
+                               OTA_RAW_CHUNK_BYTES);
             if (n >= (int)need) {
                 otaWinLen[slot] = need;
                 otaWinMask |= (1u << i);
@@ -157,7 +169,10 @@ void otaHandleRawSensor(const uint8_t* buf, int len) {
             }
         }
         if (type == RAW_TYPE_DATA_LAST) {
-            if (!otaFlushWindow()) { otaRawFail("write fail"); return; }
+            if (!otaFlushWindow()) {
+                otaRawFail("write fail");
+                return;
+            }
             otaSensorDraw();
             otaSendWack();
         }
@@ -165,9 +180,13 @@ void otaHandleRawSensor(const uint8_t* buf, int len) {
     }
 
     if (type == RAW_TYPE_POLL) {
-        if (!otaGotStart) return;
+        if (!otaGotStart)
+            return;
         otaLastActivity = millis();
-        if (!otaFlushWindow()) { otaRawFail("write fail"); return; }
+        if (!otaFlushWindow()) {
+            otaRawFail("write fail");
+            return;
+        }
         otaSendWack();
         return;
     }
@@ -207,16 +226,17 @@ void otaHandleRawSensor(const uint8_t* buf, int len) {
 
 void otaSensorDraw() {
     static uint32_t lastDraw = 0;
-    if (millis() - lastDraw < OTA_DRAW_MS) return;
+    if (millis() - lastDraw < OTA_DRAW_MS)
+        return;
     lastDraw = millis();
     mcUiOtaSensorProgress(otaGot, otaTotal, (uint32_t)packetCount, lastRSSI, lastSNR);
 }
 
-void otaSensorAbort(const char* why) {
+void otaSensorAbort(const char *why) {
     bool wasFast = otaFastMode;
     if (otaFastMode) {
-        Serial.printf("[OTA] быстрый канал: принято кадров %u, ошибок приёма %u\n",
-                      (unsigned)fastRxFrames, (unsigned)fastRxErrors);
+        Serial.printf("[OTA] быстрый канал: принято кадров %u, ошибок приёма %u\n", (unsigned)fastRxFrames,
+                      (unsigned)fastRxErrors);
     }
     radioSetNormalConfig();
     otaFastMode = false;
@@ -240,7 +260,8 @@ void otaSensorAbort(const char* why) {
 }
 
 void otaSensorTick() {
-    if (!otaActive) return;
+    if (!otaActive)
+        return;
     // бот не услышал ackstart и остался на штатном конфиге — возвращаемся, чтобы принять повтор ota:start
     if (otaFastMode && otaGot == 0 && millis() - otaLastActivity > OTA_SENSOR_FIRST_CHUNK_MS) {
         otaSensorAbort("no first chunk");
@@ -251,7 +272,10 @@ void otaSensorTick() {
     if (otaGot == otaTotal) {
         if (otaAwaitEndMs == 0) {
             // Можно проверить целостность уже сейчас: CRC копится по мере записи образа.
-            if (~otaCrcAcc != otaCrcExp) { otaSensorAbort("crc mismatch before DONE"); return; }
+            if (~otaCrcAcc != otaCrcExp) {
+                otaSensorAbort("crc mismatch before DONE");
+                return;
+            }
             otaAwaitEndMs = millis();
         } else if (millis() - otaAwaitEndMs > OTA_SENSOR_END_MS) {
             otaSensorAbort("no final DONE");
@@ -266,15 +290,20 @@ void otaSensorTick() {
 void otaSensorHandle() {
     String m = lastMessage;
 
-    if (m == "ota:abort") { otaSensorAbort("from bot"); return; }
+    if (m == "ota:abort") {
+        otaSensorAbort("from bot");
+        return;
+    }
 
     if (m.startsWith("ota:start:")) {
         // ota:start:<target>:<размер образа>:<crc32hex>:z<размер сжатого потока>
         String rest = m.substring(10);
         int p = rest.indexOf(':');
-        if (p <= 0) return;
+        if (p <= 0)
+            return;
         String target = rest.substring(0, p);
-        if (target != cfg.name) return;
+        if (target != cfg.name)
+            return;
         // Прошивку принимаем только с канала, ключ которого задан нами, а не выведен из
         // его имени: иначе образ смог бы прислать любой, кто угадал имя канала, — а
         // проверка маркера платы от подделки не спасает, это просто строка в образе.
@@ -285,31 +314,41 @@ void otaSensorHandle() {
         }
         rest = rest.substring(p + 1);
         int p2 = rest.indexOf(':');
-        if (p2 <= 0) return;
+        if (p2 <= 0)
+            return;
         uint32_t total = strtoul(rest.substring(0, p2).c_str(), NULL, 10);
         String tail = rest.substring(p2 + 1);
         uint32_t crc = (uint32_t)strtoul(tail.c_str(), NULL, 16);
         int zp = tail.indexOf(":z");
         uint32_t zsize = (zp > 0) ? strtoul(tail.c_str() + zp + 2, NULL, 10) : 0;
-        if (total == 0 || total > OTA_MAX_FW_BYTES || zsize == 0) return;
+        if (total == 0 || total > OTA_MAX_FW_BYTES || zsize == 0)
+            return;
         // прерываем предыдущую сессию, если вдруг была
-        if (otaActive && otaGotStart) Update.abort();
-        otaTotal = total; otaCrcExp = crc;
-        otaGot = 0; otaCrcAcc = 0xFFFFFFFF; otaSeqExp = 0;
+        if (otaActive && otaGotStart)
+            Update.abort();
+        otaTotal = total;
+        otaCrcExp = crc;
+        otaGot = 0;
+        otaCrcAcc = 0xFFFFFFFF;
+        otaSeqExp = 0;
         otaAwaitEndMs = 0;
-        otaActive = true; otaGotStart = true;
+        otaActive = true;
+        otaGotStart = true;
         otaLastActivity = millis();
-        #if HAS_OLED
-        screenWake();   // прошивка пришла — зажигаем экран, иначе ход не видно
-        #endif
+#if HAS_OLED
+        screenWake(); // прошивка пришла — зажигаем экран, иначе ход не видно
+#endif
         otaZFree();
         otaStreamLen = zsize;
         otaWinMask = 0;
         fwScanReset(&otaImgScan);
         otaDictOfs = 0;
-        otaInfl = (tinfl_decompressor*)malloc(sizeof(tinfl_decompressor));
-        otaDict = (uint8_t*)malloc(TINFL_LZ_DICT_SIZE);
-        if (!otaInfl || !otaDict) { otaSensorAbort("no RAM"); return; }
+        otaInfl = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+        otaDict = (uint8_t *)malloc(TINFL_LZ_DICT_SIZE);
+        if (!otaInfl || !otaDict) {
+            otaSensorAbort("no RAM");
+            return;
+        }
         tinfl_init(otaInfl);
         if (!Update.begin(total)) {
             Update.printError(Serial);
@@ -343,7 +382,8 @@ void otaSensorHandle() {
 #if FEATURE_MESH_OTA_RECEIVER
 
 bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
-    if (otaActive) return false;          // быстрая сессия уже идёт
+    if (otaActive)
+        return false; // быстрая сессия уже идёт
     otaTotal = total;
     otaCrcExp = crc;
     otaGot = 0;
@@ -351,9 +391,12 @@ bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
     otaDictOfs = 0;
     fwScanReset(&otaImgScan);
     otaZFree();
-    otaInfl = (tinfl_decompressor*)malloc(sizeof(tinfl_decompressor));
-    otaDict = (uint8_t*)malloc(TINFL_LZ_DICT_SIZE);
-    if (!otaInfl || !otaDict) { otaZFree(); return false; }
+    otaInfl = (tinfl_decompressor *)malloc(sizeof(tinfl_decompressor));
+    otaDict = (uint8_t *)malloc(TINFL_LZ_DICT_SIZE);
+    if (!otaInfl || !otaDict) {
+        otaZFree();
+        return false;
+    }
     tinfl_init(otaInfl);
     if (!Update.begin(total)) {
         Update.printError(Serial);
@@ -365,8 +408,9 @@ bool otaSlowStreamBegin(uint32_t total, uint32_t crc) {
     return true;
 }
 
-bool otaSlowStreamFeed(const uint8_t* data, size_t n, bool last) {
-    if (!otaInfl || !otaDict) return false;
+bool otaSlowStreamFeed(const uint8_t *data, size_t n, bool last) {
+    if (!otaInfl || !otaDict)
+        return false;
     return otaFeed(data, n, last);
 }
 
@@ -387,7 +431,8 @@ bool otaSlowStreamEnd(bool apply) {
             ok = true;
         }
     }
-    if (!ok && Update.isRunning()) Update.abort();
+    if (!ok && Update.isRunning())
+        Update.abort();
     otaZFree();
     return ok;
 }

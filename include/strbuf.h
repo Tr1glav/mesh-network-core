@@ -24,8 +24,7 @@ extern "C" {
 //
 // Поэтому возвращается ПОЗИЦИЯ, а не длина: прибавлять к ней нечего, и ошибиться местом
 // вызова нельзя. Строка остаётся завершённой нулём при любом исходе, включая обрезку.
-size_t strAppend(char* buf, size_t cap, size_t at, const char* fmt, ...)
-    __attribute__((format(printf, 4, 5)));
+size_t strAppend(char *buf, size_t cap, size_t at, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 
 #ifdef __cplusplus
 }

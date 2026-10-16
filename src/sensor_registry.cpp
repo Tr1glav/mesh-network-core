@@ -1,7 +1,7 @@
 #include "config.h"
 #include "globals.h"
 #include "mesh.h"
-#include "ota.h"      // slog
+#include "ota.h" // slog
 
 // ===== РЕЕСТР УЗЛОВ =====
 // Что этот узел знает о других из их сообщений в сенсорном канале: когда выходили на связь,
@@ -19,9 +19,12 @@
 // Срок годности оценки — тот же, по которому узел считается ушедшим: если он уже офлайн, то
 // и «сколько до него хопов» — сведения о прошлом, а не о сети.
 uint8_t sensorHopsFresh(int idx) {
-    if (idx < 0 || idx >= sensorDeviceDiscCount) return 0xFF;
-    if (sensorHops[idx] == 0xFF || sensorHopsMs[idx] == 0) return 0xFF;
-    if (millis() - sensorHopsMs[idx] > SENSOR_OFFLINE_MS) return 0xFF;
+    if (idx < 0 || idx >= sensorDeviceDiscCount)
+        return 0xFF;
+    if (sensorHops[idx] == 0xFF || sensorHopsMs[idx] == 0)
+        return 0xFF;
+    if (millis() - sensorHopsMs[idx] > SENSOR_OFFLINE_MS)
+        return 0xFF;
     return sensorHops[idx];
 }
 
@@ -33,9 +36,10 @@ bool lastSensorCameOnline = false;
 // выходил в эфир: он либо снят, либо всё равно не на связи, а живому узлу место нужнее.
 // Отказ («реестр полон») означал бы, что узел сверх последнего просто не появляется ни на
 // странице, ни в MQTT — без единой строки в журнале.
-static int sensorSlot(const String& name) {
+static int sensorSlot(const String &name) {
     for (int i = 0; i < sensorDeviceDiscCount; i++)
-        if (sensorDeviceDisc[i] == name) return i;
+        if (sensorDeviceDisc[i] == name)
+            return i;
 
     int idx;
     if (sensorDeviceDiscCount < SENSOR_DEV_CACHE_MAX) {
@@ -43,9 +47,10 @@ static int sensorSlot(const String& name) {
     } else {
         idx = 0;
         for (int i = 1; i < sensorDeviceDiscCount; i++)
-            if ((long)(sensorLastActive[i] - sensorLastActive[idx]) < 0) idx = i;
-        slog("[REG] реестр узлов полон (%d): '%s' вытеснен узлом '%s'\n",
-             (int)SENSOR_DEV_CACHE_MAX, sensorDeviceDisc[idx].c_str(), name.c_str());
+            if ((long)(sensorLastActive[i] - sensorLastActive[idx]) < 0)
+                idx = i;
+        slog("[REG] реестр узлов полон (%d): '%s' вытеснен узлом '%s'\n", (int)SENSOR_DEV_CACHE_MAX,
+             sensorDeviceDisc[idx].c_str(), name.c_str());
     }
     // Слот может быть переиспользован, поэтому чистим ВСЕ поля узла, а не только те, у
     // которых нет разумного нуля: версия и окружение прошлого жильца иначе показывались бы
@@ -54,7 +59,7 @@ static int sensorSlot(const String& name) {
     sensorDiscPublished[idx] = false;
     sensorPosPublished[idx] = false;
     sensorBattery[idx] = -1;
-    sensorHops[idx] = 0xFF;      // пока не услышали — не «напрямую», а «неизвестно»
+    sensorHops[idx] = 0xFF; // пока не услышали — не «напрямую», а «неизвестно»
     sensorViaSup[idx] = 0;
     sensorViaRssi[idx] = 0;
     sensorHopsMs[idx] = 0;
@@ -96,22 +101,25 @@ void sensorRegistryNote() {
     // полем, и здесь оно прочтётся как окружение — такой узел нужно обновить один раз
     // вручную, дальше он снова понятен.
     lastHello = SensorHello();
-    lastHello.isHello = (lastMessage == SENSOR_MSG_HELLO ||
-                         lastMessage.startsWith(SENSOR_MSG_HELLO ":"));
+    lastHello.isHello = (lastMessage == SENSOR_MSG_HELLO || lastMessage.startsWith(SENSOR_MSG_HELLO ":"));
     if (lastHello.isHello) {
         String rest = lastMessage.substring(strlen(SENSOR_MSG_HELLO) + 1);
-        String* fields[] = { &lastHello.ver, &lastHello.batPct, &lastHello.batVolt,
-                             &lastHello.env, &lastHello.lat, &lastHello.lon };
+        String *fields[] = {&lastHello.ver, &lastHello.batPct, &lastHello.batVolt,
+                            &lastHello.env, &lastHello.lat,    &lastHello.lon};
         for (int i = 0; i < 6 && rest.length() > 0; i++) {
             int p = rest.indexOf(':');
             *fields[i] = (p < 0) ? rest : rest.substring(0, p);
             rest = (p < 0) ? String() : rest.substring(p + 1);
-            if (*fields[i] == "-") *fields[i] = "";
+            if (*fields[i] == "-")
+                *fields[i] = "";
         }
     }
-    if (lastHello.ver.length() > 0)    sensorFwVersion[idx] = lastHello.ver;
-    if (lastHello.env.length() > 0)    sensorEnv[idx] = lastHello.env;
-    if (lastHello.batPct.length() > 0) sensorBattery[idx] = lastHello.batPct.toInt();
+    if (lastHello.ver.length() > 0)
+        sensorFwVersion[idx] = lastHello.ver;
+    if (lastHello.env.length() > 0)
+        sensorEnv[idx] = lastHello.env;
+    if (lastHello.batPct.length() > 0)
+        sensorBattery[idx] = lastHello.batPct.toInt();
 }
 
 // Версия образа, которую узел называл последний раз. Поиск только по существующим записям:
@@ -119,9 +127,10 @@ void sensorRegistryNote() {
 // нет, создавало бы фантом на странице и в MQTT, а в полном реестре ещё и вытесняло бы
 // кого-то живого. Нужно медленной сессии: она начинается, не зная, что было у цели, и
 // сравнивает это с тем, что услышала после.
-String sensorVersionOf(const String& name) {
+String sensorVersionOf(const String &name) {
     for (int i = 0; i < sensorDeviceDiscCount; i++)
-        if (sensorDeviceDisc[i] == name) return sensorFwVersion[i];
+        if (sensorDeviceDisc[i] == name)
+            return sensorFwVersion[i];
     return String();
 }
 

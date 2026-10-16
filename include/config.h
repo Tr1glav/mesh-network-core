@@ -36,7 +36,7 @@
 // Прошивка может задать признак раньше (в своём features.h или флагом сборки) — тогда
 // #ifndef её значение не тронет.
 #ifndef FEATURE_RELAY
-  #define FEATURE_RELAY 0
+#define FEATURE_RELAY 0
 #endif
 
 // Имя узла, каналы, WiFi и MQTT берутся из NVS (cfg), а не из build-флагов
@@ -57,7 +57,7 @@
 #define LOCAL_TZ "Europe/Moscow UTC+3"
 
 // ===== КАНАЛЫ =====
-#define MAX_CHANNELS 8        // 4 своих + место для каналов, добавленных из приложения
+#define MAX_CHANNELS 8 // 4 своих + место для каналов, добавленных из приложения
 // Открытый текст группового сообщения [ts 4][type 1][«имя: »][текст]:
 // шифр ≤ 240 + MAC 2 + заголовок 3 ≤ 255 Б (лимит кадра SX1262)
 #define GROUP_TEXT_MAX_PLAIN 240
@@ -68,7 +68,7 @@
 // ---- Сенсорные сообщения ----
 #define SENSOR_MSG_BUTTON "button"
 #define SENSOR_MSG_BUTTON2 "button2"
-#define SENSOR_MSG_HELLO   "hello"
+#define SENSOR_MSG_HELLO "hello"
 #define SENSOR_MSG_HELLO_REQ "hello?"
 // Прошивальщиков может быть несколько: каждый стоит там, где слышно свою часть сети.
 // Реестр держит ядро (supports[] в globals.h), ведущего под конкретную цель выбирает
@@ -125,8 +125,8 @@
 // в образ не попадают. Пустой ключ выключает форвард, а не открывает его.
 // Тройное нажатие кнопки на сенсоре: эхо-запрос к координатору для проверки связи.
 // Запрос уходит ОДИНОЧНОЙ посылкой — иначе во время ответа мерялись бы повторы.
-#define SENSOR_MSG_PING     "ping:"      // сенсор -> координатор: ping:<номер>
-#define SENSOR_MSG_PONG     "pong:"      // координатор -> сенсор: pong:<номер>:<rssi>:<snr>
+#define SENSOR_MSG_PING "ping:" // сенсор -> координатор: ping:<номер>
+#define SENSOR_MSG_PONG "pong:" // координатор -> сенсор: pong:<номер>:<rssi>:<snr>
 // ===== ВРЕМЕННЫЕ БЮДЖЕТЫ =====
 // Таймауты и паузы в протоколе нельзя задавать по отдельности: каждая передача теперь ждёт
 // тишины в канале (CAD) и висит в эфире не меньше FRAME_AIRTIME_MS, а ответ проходит ещё
@@ -253,16 +253,16 @@ void vextApply(uint16_t vextOn);
 // затем, чтобы правила переиздания не писались магическими числами: именно из-за числа без
 // имени в mesh_relay.cpp появилось условие «транспортные коды (0x00/0x03)», которое на самом
 // деле отбрасывало REQ и ACK — см. комментарий там.
-#define PAYLOAD_TYPE_REQ        0x00
-#define PAYLOAD_TYPE_RESPONSE   0x01
-#define PAYLOAD_TYPE_TXT_MSG    0x02
-#define PAYLOAD_TYPE_ACK        0x03
-#define PAYLOAD_TYPE_ADVERT     0x04
-#define PAYLOAD_TYPE_GRP_TXT    0x05
-#define PAYLOAD_TYPE_GRP_DATA   0x06
-#define PAYLOAD_TYPE_ANON_REQ   0x07
-#define PAYLOAD_TYPE_PATH       0x08
-#define PAYLOAD_TYPE_TRACE      0x09
+#define PAYLOAD_TYPE_REQ 0x00
+#define PAYLOAD_TYPE_RESPONSE 0x01
+#define PAYLOAD_TYPE_TXT_MSG 0x02
+#define PAYLOAD_TYPE_ACK 0x03
+#define PAYLOAD_TYPE_ADVERT 0x04
+#define PAYLOAD_TYPE_GRP_TXT 0x05
+#define PAYLOAD_TYPE_GRP_DATA 0x06
+#define PAYLOAD_TYPE_ANON_REQ 0x07
+#define PAYLOAD_TYPE_PATH 0x08
+#define PAYLOAD_TYPE_TRACE 0x09
 
 // ===== ЗАПРОСЫ К РЕТРАНСЛЯТОРУ И СЕРВЕРУ =====
 // Содержимое кадра REQ начинается с типа запроса. Числа — из оригинала
@@ -270,20 +270,20 @@ void vextApply(uint16_t vextOn);
 // договариваться с ними можно только их числами. Вход — ANON_REQ с паролем, дальше
 // по той же связи идут запросы состояния и телеметрии, а управление — командной
 // строкой в личке с типом текста CLI.
-#define REQ_TYPE_GET_STATUS         0x01   // метрики ретранслятора (RepeaterStats)
-#define REQ_TYPE_KEEP_ALIVE         0x02   // продлить сессию входа
-#define REQ_TYPE_GET_TELEMETRY_DATA 0x03   // телеметрия датчиков
-#define REQ_TYPE_GET_ACCESS_LIST    0x05
-#define REQ_TYPE_GET_NEIGHBOURS     0x06
+#define REQ_TYPE_GET_STATUS 0x01         // метрики ретранслятора (RepeaterStats)
+#define REQ_TYPE_KEEP_ALIVE 0x02         // продлить сессию входа
+#define REQ_TYPE_GET_TELEMETRY_DATA 0x03 // телеметрия датчиков
+#define REQ_TYPE_GET_ACCESS_LIST 0x05
+#define REQ_TYPE_GET_NEIGHBOURS 0x06
 // Первый байт ответа на вход (после четырёхбайтовой метки): 0 — вход разрешён.
-#define RESP_SERVER_LOGIN_OK        0x00
+#define RESP_SERVER_LOGIN_OK 0x00
 // Пароль входа длиннее оригинал не принимает.
-#define LOGIN_PASSWORD_MAX          15
+#define LOGIN_PASSWORD_MAX 15
 
-#define ROUTE_TYPE_TRANSPORT_FLOOD  0x00   // флуд с транспортными кодами
-#define ROUTE_TYPE_FLOOD            0x01   // флуд, путь достраивается хопами — наш случай
-#define ROUTE_TYPE_DIRECT           0x02   // передача по известному пути
-#define ROUTE_TYPE_TRANSPORT_DIRECT 0x03   // то же с транспортными кодами
+#define ROUTE_TYPE_TRANSPORT_FLOOD 0x00  // флуд с транспортными кодами
+#define ROUTE_TYPE_FLOOD 0x01            // флуд, путь достраивается хопами — наш случай
+#define ROUTE_TYPE_DIRECT 0x02           // передача по известному пути
+#define ROUTE_TYPE_TRANSPORT_DIRECT 0x03 // то же с транспортными кодами
 
 // ===== ПРАВИЛА ПЕРЕИЗДАНИЯ: КОПИЯ ОРИГИНАЛЬНОГО MeshCore =====
 // Политика «переиздавать ли этот кадр» перенесена из оригинального MeshCore
@@ -308,7 +308,7 @@ void vextApply(uint16_t vextOn);
 #define RELAY_FLOOD_MAX 32
 #endif
 #ifndef RELAY_FLOOD_MAX_ADVERT
-#define RELAY_FLOOD_MAX_ADVERT 8    // у оригинала flood_max_advert = 8
+#define RELAY_FLOOD_MAX_ADVERT 8 // у оригинала flood_max_advert = 8
 #endif
 
 // ОПРЕДЕЛЕНИЕ ПЕТЛИ. Сколько раз наш хэш может встретиться в пути, прежде чем кадр считается
@@ -320,10 +320,10 @@ void vextApply(uint16_t vextOn);
 // По умолчанию STRICT — то же поведение, что было до переноса: любое вхождение нашего хэша
 // отменяет переиздание. Уровни заведены затем, чтобы в общем канале с однобайтовыми хэшами
 // оригинала было чем ослабить правило, не правя код.
-#define RELAY_LOOP_OFF      0
-#define RELAY_LOOP_MINIMAL  1
+#define RELAY_LOOP_OFF 0
+#define RELAY_LOOP_MINIMAL 1
 #define RELAY_LOOP_MODERATE 2
-#define RELAY_LOOP_STRICT   3
+#define RELAY_LOOP_STRICT 3
 #ifndef RELAY_LOOP_DETECT
 #define RELAY_LOOP_DETECT RELAY_LOOP_STRICT
 #endif
@@ -391,8 +391,8 @@ void vextApply(uint16_t vextOn);
 #define HELLO_REPLY_DELAY_MIN_MS 1500
 #define HELLO_REPLY_DELAY_MAX_MS 9000
 // Не дождались ответа за весь расчётный бюджет — считаем потерей.
-#define PING_TIMEOUT_MS     ((unsigned long)(PING_RESPONSE_WORST_MS + PING_TIMEOUT_MARGIN_MS))
-#define PING_SHOW_MS        15000UL      // сколько держать результат на экране после режима
+#define PING_TIMEOUT_MS ((unsigned long)(PING_RESPONSE_WORST_MS + PING_TIMEOUT_MARGIN_MS))
+#define PING_SHOW_MS 15000UL // сколько держать результат на экране после режима
 
 // ===== РЕЖИМ ПРОВЕРКИ ДОСТУПНОСТИ =====
 // Одиночный запрос отвечает только на «есть ли связь сию секунду», а на границе слышимости
@@ -425,7 +425,7 @@ void vextApply(uint16_t vextOn);
 // нажатие триггером не считается вовсе, а от двух секунд будит погасший экран:
 // иначе случайное удержание кнопки в кармане слало бы сообщения в сеть.
 #define BTN_TRIGGER_MAX_MS 1000
-#define BTN_WAKE_MS        2000
+#define BTN_WAKE_MS 2000
 
 // ===== ЭНЕРГОСБЕРЕЖЕНИЕ (узлы на аккумуляторе; координатор питается от сети) =====
 // Панель ест 15–25 мА и большую часть времени никем не читается.
@@ -443,7 +443,6 @@ void vextApply(uint16_t vextOn);
 #ifndef SENSOR_HEARTBEAT_MS
 #define SENSOR_HEARTBEAT_MS (10UL * 60 * 1000)
 #endif
-
 
 
 // Пауза без сообщений от датчика, после которой его availability уходит в offline
@@ -498,7 +497,7 @@ struct PeerEntry {
 // число хопов. Вся сеть обязана считать одинаково, поэтому значение одно на все платы:
 // два байта на хоп (меньше совпадений хэшей), при пути в 64 байта это максимум 32 хопа.
 #define PATH_HASH_SIZE 2
-#define PATH_LEN_INIT  ((uint8_t)((PATH_HASH_SIZE - 1) << 6))   // 0 хопов, хэш нужного размера
+#define PATH_LEN_INIT ((uint8_t)((PATH_HASH_SIZE - 1) << 6)) // 0 хопов, хэш нужного размера
 
 // Список узлов, который видит приложение. Лежит не в NVS (там всего 20 КБ на весь
 // раздел, вместе с настройками), а файлом в LittleFS, поэтому предел задаёт только
@@ -506,16 +505,16 @@ struct PeerEntry {
 #define COMPANION_MAX_CONTACTS 200
 
 // ===== ИДЕНТИЧНОСТЬ НОДЫ ДЛЯ ADVERT =====
-#define ADVERT_PERIOD_MS        (5UL * 60 * 1000)
+#define ADVERT_PERIOD_MS (5UL * 60 * 1000)
 #define ADVERT_FLOOD_PERIOD_MS (30UL * 60 * 1000)
 #define ADV_ROUTE_DIRECT 0x02
-#define ADV_ROUTE_FLOOD  0x01
+#define ADV_ROUTE_FLOOD 0x01
 
 // ===== СЕТЬ, ВРЕМЯ, HOME ASSISTANT =====
 // Без условия: это числа, они ничего не весят, а под #ifdef MQTT_ENABLED интервал
 // переподключения СЕТИ оказывался недоступен там, где брокера нет, — хотя сеть есть.
-#define NET_RETRY_INTERVAL_MS 5000            // как часто пробуем поднять WiFi (netTick)
-#define MQTT_STATUS_INTERVAL_MS  60000
+#define NET_RETRY_INTERVAL_MS 5000 // как часто пробуем поднять WiFi (netTick)
+#define MQTT_STATUS_INTERVAL_MS 60000
 #define NTP_RESYNC_INTERVAL_MS (60UL * 60 * 1000)
 #define LASTMSG_RESET_MS 4000
 #define SNS_BTN_CLEAR_MS 500
@@ -559,9 +558,9 @@ struct PeerEntry {
 #define OTA_MAX_RETRIES 4
 #define OTA_MAX_FW_BYTES (3UL * 1024 * 1024)
 #define OTA_DRAW_MS 1000
-#define OTA_FAST_FREQ       868.950
+#define OTA_FAST_FREQ 868.950
 // Ответ сенсора на ota:start; число — версия протокола mesh OTA
-#define OTA_ACKSTART        "ota:ackstart:1"
+#define OTA_ACKSTART "ota:ackstart:1"
 // Бот, услышав ackstart, уходит на быстрый канал и ждёт OTA_FAST_SETTLE_MS перед первой
 // пачкой. Сенсор должен оказаться там вовремя, и бюджет тут не «сколько копий не жалко»:
 // пока сенсор шлёт копии, он ещё в обычном канале, его сторож OTA_SENSOR_FIRST_CHUNK_MS
@@ -588,25 +587,25 @@ struct PeerEntry {
 // Сколько бот ждёт после ackstart, прежде чем слать первую пачку. Это НЕ «сколько-нибудь»:
 // столько же занимает отправка ackstart у сенсора (2 кадра в эфире + пауза), и ждать
 // меньше — значит уйти на быстрый канал раньше сенсора и потерять первую пачку.
-#define OTA_FAST_SETTLE_MS  1200
+#define OTA_FAST_SETTLE_MS 1200
 // Быстрый канал — GFSK. Параметры связаны между собой: полоса приёмника должна
 // покрывать 2*(девиация + скорость/2) — правило Карсона, — а девиация задаёт индекс
 // модуляции 2*dev/br, который для надёжного приёма держат около единицы.
 // Прошлая попытка поднять скорость до 250 кбит/с оставила девиацию 50 кГц и полосу
 // 234 кГц: индекс падал до 0.4, а полоса была вдвое уже нужной — связь и разваливалась.
-#define OTA_FSK_BR          250.0   // кбит/с
-#define OTA_FSK_DEV         125.0   // кГц: индекс модуляции 1.0
-#define OTA_FSK_RXBW        467.0   // кГц: ближайшее к 2*(125+125)=500, что умеет SX1262
-#define OTA_FSK_PREAMBLE    32      // бит
+#define OTA_FSK_BR 250.0    // кбит/с
+#define OTA_FSK_DEV 125.0   // кГц: индекс модуляции 1.0
+#define OTA_FSK_RXBW 467.0  // кГц: ближайшее к 2*(125+125)=500, что умеет SX1262
+#define OTA_FSK_PREAMBLE 32 // бит
 // Чанков в пачке до подтверждения. Предел — 16: маска подтверждений uint16.
 // При 8 на каждые 8 кадров приходился обмен квитанцией, и в замере выходило 3.8 КБ/с
 // при теоретических 12.5 КБ/с для GFSK 100 кбит/с — ждём ответ вдвое реже.
-#define OTA_WINDOW          16
+#define OTA_WINDOW 16
 // пауза между кадрами пачки: сенсор должен вычитать кадр и вернуться в RX до следующего
 // Измерено на стенде: при 8 мс сессия занимает 56.7 с, при 4 мс — 61.6 с. Меньшая пауза
 // экономит 4.4 с ожидания, но сенсор перестаёт успевать: кадров уходит 1259 вместо 1177,
 // опросов 10 вместо 4, а каждый опрос стоит 400 мс. Это граница возможностей приёмника.
-#define OTA_BURST_GAP_MS    8
+#define OTA_BURST_GAP_MS 8
 
 // Сенсорная сторона OTA
 #define OTA_SENSOR_STALL_MS 60000
@@ -616,7 +615,7 @@ struct PeerEntry {
 // сдаётся после OTA_END_TIMEOUT_MS*(OTA_MAX_RETRIES+2) ≈ 18 с. Этот сторож кроет то же
 // окно с запасом: потерялся DONE — сенсор сам возвращается на штатный канал, а не сидит
 // весь OTA_SENSOR_STALL_MS (60 с) в быстром, глухой к сети.
-#define OTA_SENSOR_END_MS   20000
+#define OTA_SENSOR_END_MS 20000
 
 // ===== МЕДЛЕННЫЙ РЕЖИМ: ПРОШИВКА ПО САМОМУ MESHCORE =====
 // Быстрый режим идёт сырыми FSK-кадрами, и ретрансляторы их не переносят: дальше
@@ -667,8 +666,7 @@ struct PeerEntry {
 #define OTA_SLOW_ACK_JITTER_MS 600
 // Столько ждёт ведущий, пока узел отвечает: пауза узла, её разброс, переиздание
 // подтверждения ретрансляторами и время в эфире.
-#define OTA_SLOW_RESP_MS (OTA_SLOW_ACK_DELAY_MS + OTA_SLOW_ACK_JITTER_MS + \
-                          RELAY_DELAY_MAX_MS + FRAME_AIRTIME_MS)
+#define OTA_SLOW_RESP_MS (OTA_SLOW_ACK_DELAY_MS + OTA_SLOW_ACK_JITTER_MS + RELAY_DELAY_MAX_MS + FRAME_AIRTIME_MS)
 // Сколько ведущий ждёт подтверждения: ровно окно ответа. Дольше ждать нечего — узел либо
 // ответил в свою фазу, либо не ответил вовсе.
 #define OTA_SLOW_ACK_TIMEOUT_MS OTA_SLOW_RESP_MS
@@ -694,11 +692,11 @@ struct PeerEntry {
 #define OTA_SLOW_AIR_BUSY_MS (RELAY_DELAY_MAX_MS + 700)
 
 // Сообщения медленного режима. Данные — "osd:<seq>:<base64>", остальное управление.
-#define OTA_SLOW_MSG_START "ota:slow:"     // <target>:<байт>:<crc32>:<чанков>
-#define OTA_SLOW_MSG_DATA  "osd:"          // <seq>:<base64 чанка>
-#define OTA_SLOW_MSG_ACK   "ota:sack:"     // <номер следующего ожидаемого чанка>
-#define OTA_SLOW_MSG_DONE  "ota:sdone:"    // <target> — образ принят и применён
-#define OTA_SLOW_MSG_FAIL  "ota:sfail:"    // <причина>
+#define OTA_SLOW_MSG_START "ota:slow:" // <target>:<байт>:<crc32>:<чанков>
+#define OTA_SLOW_MSG_DATA "osd:"       // <seq>:<base64 чанка>
+#define OTA_SLOW_MSG_ACK "ota:sack:"   // <номер следующего ожидаемого чанка>
+#define OTA_SLOW_MSG_DONE "ota:sdone:" // <target> — образ принят и применён
+#define OTA_SLOW_MSG_FAIL "ota:sfail:" // <причина>
 
 // ===== ЧИСТЫЙ LoRa OTA (сырые фреймы вне meshcore) =====
 // Данные шлются напрямую radio.transmit/readData на быстрой конфигурации
@@ -707,22 +705,22 @@ struct PeerEntry {
 //   [magic0][magic1][type][seq4 LE][data...][crc16 2B LE]
 // Фрейм <= 255 Б (лимит SX1262), служебных 11 Б (в DATA ещё MAC 2 Б перед шифром).
 #define OTA_RAW_CHUNK_BYTES 240
-#define OTA_RAW_FRAME_MAX   (11 + OTA_RAW_CHUNK_BYTES)   // заголовок 7 + MAC 2 + шифр + crc16 2
-#define RAW_MAGIC0  0xBE
-#define RAW_MAGIC1  0xEF
+#define OTA_RAW_FRAME_MAX (11 + OTA_RAW_CHUNK_BYTES) // заголовок 7 + MAC 2 + шифр + crc16 2
+#define RAW_MAGIC0 0xBE
+#define RAW_MAGIC1 0xEF
 // бот -> сенсор
-#define RAW_TYPE_DATA  0x02
-#define RAW_TYPE_DONE  0x03
+#define RAW_TYPE_DATA 0x02
+#define RAW_TYPE_DONE 0x03
 #define RAW_TYPE_ABORT 0x04
-#define RAW_TYPE_DATA_LAST 0x05   // последний кадр пачки, ответить WACK
-#define RAW_TYPE_POLL  0x06       // запрос WACK
+#define RAW_TYPE_DATA_LAST 0x05 // последний кадр пачки, ответить WACK
+#define RAW_TYPE_POLL 0x06      // запрос WACK
 // сенсор -> бот
 #define RAW_TYPE_DONE_ACK 0x83
-#define RAW_TYPE_FAIL    0x84
-#define RAW_TYPE_WACK    0x85     // seq = первый недостающий чанк, данные = маска 2B LE следующих
+#define RAW_TYPE_FAIL 0x84
+#define RAW_TYPE_WACK 0x85 // seq = первый недостающий чанк, данные = маска 2B LE следующих
 // Сжатый файл прошивки (scripts/copy_firmware.py): [OTAZ][размер образа 4B LE][CRC32 образа 4B LE][zlib]
 #define OTA_Z_MAGIC "OTAZ"
-#define OTA_Z_HDR   12
+#define OTA_Z_HDR 12
 // Нули, дописываемые в эфир после zlib-потока. Узлы до 0.2.36 распаковывают каждый чанк
 // с флагом «вход ещё будет» и на последнем придерживают хвост образа: распаковщику не
 // хватает бит в буфере на последние символы. Эти байты дают ему слабину — он доходит до
@@ -737,17 +735,11 @@ struct PeerEntry {
 struct MeshChannel {
     uint8_t secret[32];
     uint8_t hash;
-    const char* name;
+    const char *name;
 };
 
 // ===== OTA_PHASE =====
-enum {
-    OTA_PHASE_IDLE = 0,
-    OTA_PHASE_WAIT_START,
-    OTA_PHASE_DATA,
-    OTA_PHASE_WAIT_END,
-    OTA_PHASE_DONE
-};
+enum { OTA_PHASE_IDLE = 0, OTA_PHASE_WAIT_START, OTA_PHASE_DATA, OTA_PHASE_WAIT_END, OTA_PHASE_DONE };
 
 // ===== ФЛУД-ОТПРАВКА =====
 // Сколько копий одного сообщения уходит в эфир.
@@ -795,7 +787,7 @@ enum {
 // в загружаемом образе и отказывается ставить прошивку от другой платы: перепутанный
 // файл не запустится, а снимается такой «кирпич» только USB-кабелем.
 #define FW_MARK_PREFIX "MBFW:"
-#define FW_MARKER      FW_MARK_PREFIX BOARD_CODE ":" FW_VERSION
+#define FW_MARKER FW_MARK_PREFIX BOARD_CODE ":" FW_VERSION
 
 // Сколько сенсор ждёт подтверждающий "save" после правок настроек по радио. Не дождался —
 // перезагружается и возвращается к сохранённым настройкам, чтобы не остаться в
@@ -807,14 +799,14 @@ enum {
 #ifndef FW_RELEASE_API
 #define FW_RELEASE_API "https://api.github.com/repos/Tr1glav/meshcore-fork/releases/latest"
 #endif
-#define FW_CHECK_INTERVAL_MS (6UL * 60 * 60 * 1000)   // раз в 6 часов
+#define FW_CHECK_INTERVAL_MS (6UL * 60 * 60 * 1000) // раз в 6 часов
 // Адрес файла собирается из имени окружения узла: <окружение>_v<версия>.otaz
 #ifndef FW_RELEASE_DL
 #define FW_RELEASE_DL "https://github.com/Tr1glav/meshcore-fork/releases/download/"
 #endif
 // После обновления одного сенсора следующий ждёт не полный цикл, а этот срок: очередь
 // разбирается быстро, но по одному — эфир и сессия прошивки всё равно одни на всех.
-#define FW_RECHECK_AFTER_MS  (10UL * 60 * 1000)
+#define FW_RECHECK_AFTER_MS (10UL * 60 * 1000)
 #ifndef FW_ENV
 #define FW_ENV "unknown"
 #endif
@@ -824,6 +816,19 @@ enum {
 
 // ===== LOG_TAIL =====
 #define LOG_TAIL_MAX 4000
+
+// ===== АВТОМАТИЧЕСКОЕ УПРАВЛЕНИЕ ЯРКОСТЬЮ ЭКРАНА =====
+// Признак привязан к панели: модуль есть только в проекте T-Deck (драйвер ST7789).
+// На остальных платформах AUTO_BRIGHTNESS_ENABLED = 0, и весь код вырезается.
+#if defined(OLED_DRIVER_ST7789) && OLED_DRIVER_ST7789
+#define AUTO_BRIGHTNESS_ENABLED 1
+#else
+#define AUTO_BRIGHTNESS_ENABLED 0
+#endif
+#define AUTO_BRIGHTNESS_NIGHT_START 19 // Час начала ночного режима (19:00)
+#define AUTO_BRIGHTNESS_NIGHT_END 7    // Час окончания ночного режима (07:00)
+#define AUTO_BRIGHTNESS_NIGHT_LEVEL 50 // Яркость ночью (% от полной, 0-100)
+#define AUTO_BRIGHTNESS_CHECK_MS 60000 // Как часто проверять время (60 сек)
 
 // ===== КОНТРАКТ ЯДРО <-> ПРОШИВКА =====
 // Хуки платформы (экран, батарея, сеть, прошивальщик). Подключаем здесь, а не в каждом

@@ -2,7 +2,7 @@
 #include "globals.h"
 #include "radio.h"
 #include "mesh.h"
-#include "radio.h"   // radioAirtimeMs: задержка переиздания из времени кадра
+#include "radio.h" // radioAirtimeMs: задержка переиздания из времени кадра
 
 // ===== Ретрансляция чужих флуд-кадров (ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ) =====
 // Ретранслятором не должен быть никто: FEATURE_RELAY по умолчанию 0 (значение задаёт
@@ -51,7 +51,7 @@
 #endif
 
 static struct {
-    unsigned long dueMs;         // 0 — слот свободен
+    unsigned long dueMs; // 0 — слот свободен
     uint8_t frame[256];
     int len;
 } relayQueue[RELAY_QUEUE_MAX];
@@ -69,33 +69,39 @@ static int relaySeenNext = 0;
 // хопа в байтах, нулевой элемент не используется (размер начинается с единицы). Числа
 // скопированы у оригинала: однобайтовый хэш сталкивается часто, и там «увидел себя» ещё не
 // значит петлю; с ростом размера хэша допуск сужается до единицы.
-static const uint8_t relayLoopMinimal[]  = { 0, /* 1 Б */ 4, /* 2 Б */ 2, /* 3 Б */ 1 };
-static const uint8_t relayLoopModerate[] = { 0, /* 1 Б */ 2, /* 2 Б */ 1, /* 3 Б */ 1 };
-static const uint8_t relayLoopStrict[]   = { 0, /* 1 Б */ 1, /* 2 Б */ 1, /* 3 Б */ 1 };
+static const uint8_t relayLoopMinimal[] = {0, /* 1 Б */ 4, /* 2 Б */ 2, /* 3 Б */ 1};
+static const uint8_t relayLoopModerate[] = {0, /* 1 Б */ 2, /* 2 Б */ 1, /* 3 Б */ 1};
+static const uint8_t relayLoopStrict[] = {0, /* 1 Б */ 1, /* 2 Б */ 1, /* 3 Б */ 1};
 
 // Предел хопов для флуд-кадра. У оригинала три числа; у нас тип флуда один, поэтому общий
 // предел и предел неохваченного флуда — одно и то же RELAY_FLOOD_MAX, а объявления отсечены
 // отдельным RELAY_FLOOD_MAX_ADVERT: advert идёт по всей сети, и лишний хоп множит копии.
 bool relayFloodHopLimitExceeded(uint8_t payload_type, uint8_t hop_count) {
-    if (hop_count >= RELAY_FLOOD_MAX) return true;
-    if (payload_type == PAYLOAD_TYPE_ADVERT && hop_count >= RELAY_FLOOD_MAX_ADVERT) return true;
+    if (hop_count >= RELAY_FLOOD_MAX)
+        return true;
+    if (payload_type == PAYLOAD_TYPE_ADVERT && hop_count >= RELAY_FLOOD_MAX_ADVERT)
+        return true;
     return false;
 }
 
 // Петля: считаем, сколько раз наш хэш уже стоит в пути, и сравниваем с допуском для этого
 // размера хэша. Раньше здесь был выход по ПЕРВОМУ совпадению — это ровно уровень STRICT,
 // поэтому поведение по умолчанию не изменилось, но появилось чем его ослабить.
-bool relayIsLooped(const uint8_t* path, uint8_t hop_count, uint8_t hash_size) {
-    if (RELAY_LOOP_DETECT == RELAY_LOOP_OFF) return false;
-    const uint8_t* maximums = relayLoopStrict;
-    if (RELAY_LOOP_DETECT == RELAY_LOOP_MINIMAL)       maximums = relayLoopMinimal;
-    else if (RELAY_LOOP_DETECT == RELAY_LOOP_MODERATE) maximums = relayLoopModerate;
+bool relayIsLooped(const uint8_t *path, uint8_t hop_count, uint8_t hash_size) {
+    if (RELAY_LOOP_DETECT == RELAY_LOOP_OFF)
+        return false;
+    const uint8_t *maximums = relayLoopStrict;
+    if (RELAY_LOOP_DETECT == RELAY_LOOP_MINIMAL)
+        maximums = relayLoopMinimal;
+    else if (RELAY_LOOP_DETECT == RELAY_LOOP_MODERATE)
+        maximums = relayLoopModerate;
     // Размер хэша кадр объявляет сам и может объявить больше, чем у нас таблиц: тогда берём
     // самый строгий допуск, а не читаем за границу массива.
     const uint8_t allow = (hash_size < sizeof(relayLoopStrict)) ? maximums[hash_size] : 1;
     uint8_t n = 0;
     for (uint8_t h = 0; h < hop_count; h++) {
-        if (memcmp(path + (size_t)h * hash_size, bot_pub, hash_size) == 0) n++;
+        if (memcmp(path + (size_t)h * hash_size, bot_pub, hash_size) == 0)
+            n++;
     }
     return n >= allow;
 }
@@ -111,13 +117,15 @@ unsigned long relayDelayMs(int frameLen) {
     unsigned long d = RELAY_DELAY_MIN_MS + (spread ? (unsigned long)random(0, spread + 1) : 0);
     // Выше объявленного бюджета не поднимаемся: из RELAY_DELAY_MAX_MS выведены чужие
     // таймауты ожидания, и превысить его значит соврать им.
-    if (d > RELAY_DELAY_MAX_MS) d = RELAY_DELAY_MAX_MS;
+    if (d > RELAY_DELAY_MAX_MS)
+        d = RELAY_DELAY_MAX_MS;
     return d;
 }
 
 static bool relayWasQueued(const uint8_t hash[32]) {
     for (int i = 0; i < RELAY_SEEN_COUNT; i++) {
-        if (memcmp(hash, &relaySeen[i * SEEN_HASH_SIZE], SEEN_HASH_SIZE) == 0) return true;
+        if (memcmp(hash, &relaySeen[i * SEEN_HASH_SIZE], SEEN_HASH_SIZE) == 0)
+            return true;
     }
     return false;
 }
@@ -129,10 +137,12 @@ static void relayMarkQueued(const uint8_t hash[32]) {
 
 // Решение и постановка в очередь. data/len — принятый кадр ДО переиздания (с исходным путём).
 // Возвращает, что стало с кадром: см. RELAY_* в mesh.h.
-int maybeQueueRelay(const uint8_t* data, int len) {
+int maybeQueueRelay(const uint8_t *data, int len) {
     // Быстрый канал mesh OTA — односкачный (сырые кадры ретрансляторы не переносят).
-    if (otaFastMode) return RELAY_SKIPPED;
-    if (len < 2) return RELAY_SKIPPED;
+    if (otaFastMode)
+        return RELAY_SKIPPED;
+    if (len < 2)
+        return RELAY_SKIPPED;
     uint8_t header = data[0];
     uint8_t payload_type = (header >> 2) & 0x0F;
     uint8_t route_type = header & 0x03;
@@ -147,17 +157,21 @@ int maybeQueueRelay(const uint8_t* data, int len) {
     // переносить подтверждения доставки: сообщение через нас проходило, а ack на него — нет.
     // У оригинала allowPacketForward по типу нагрузки не фильтрует вовсе (кроме отдельного
     // предела хопов для объявлений), и это правильно: репитер переносит, а не выбирает.
-    if (route_type != ROUTE_TYPE_FLOOD) return RELAY_SKIPPED;
+    if (route_type != ROUTE_TYPE_FLOOD)
+        return RELAY_SKIPPED;
 
     // Уже переиздавали этот кадр — в очередь второй раз его незачем. Проверка идёт ДО всего
     // остального, и поэтому работает даже для копии, которую общий дедуп уже отбросил: такая
     // копия — это шанс поставить кадр в очередь после того, как очередь освободилась.
     uint8_t hash[32];
-    if (!meshFrameHashOf(data, len, hash)) return RELAY_SKIPPED;
-    if (relayWasQueued(hash)) return RELAY_SKIPPED;
+    if (!meshFrameHashOf(data, len, hash))
+        return RELAY_SKIPPED;
+    if (relayWasQueued(hash))
+        return RELAY_SKIPPED;
 
-    int offset = 1;              // у flood-кадров байт пути стоит сразу после заголовка
-    if (offset >= len) return RELAY_SKIPPED;
+    int offset = 1; // у flood-кадров байт пути стоит сразу после заголовка
+    if (offset >= len)
+        return RELAY_SKIPPED;
     uint8_t path_len = data[offset++];
     uint8_t path_hash_size = (path_len >> 6) + 1;
     uint8_t hop_count = path_len & 0x3F;
@@ -181,21 +195,27 @@ int maybeQueueRelay(const uint8_t* data, int len) {
                       (unsigned)path_hash_size, (unsigned)PATH_HASH_SIZE);
         return RELAY_SKIPPED;
     }
-    if (relayFloodHopLimitExceeded(payload_type, hop_count)) return RELAY_SKIPPED;
+    if (relayFloodHopLimitExceeded(payload_type, hop_count))
+        return RELAY_SKIPPED;
     int pathBytes = hop_count * path_hash_size;
-    if (offset + pathBytes >= len) return RELAY_SKIPPED;     // битый кадр: тело пустое
+    if (offset + pathBytes >= len)
+        return RELAY_SKIPPED; // битый кадр: тело пустое
 
     // Наш хэш уже есть в пути — кадр когда-то прошёл через нас (петля или эхо).
-    if (relayIsLooped(&data[offset], hop_count, path_hash_size)) return RELAY_SKIPPED;
+    if (relayIsLooped(&data[offset], hop_count, path_hash_size))
+        return RELAY_SKIPPED;
 
     // Личку НЕ для нас не разносим (у каждого свои ключи, читать её кроме адресата никто
     // не сможет), а личку для нас дальше передавать незачем — мы и есть получатель.
     if (payload_type == PAYLOAD_TYPE_TXT_MSG) {
-        if (offset + pathBytes + 2 > len) return RELAY_SKIPPED;
-        if (data[offset + pathBytes] == ownShortHash) return RELAY_SKIPPED;
+        if (offset + pathBytes + 2 > len)
+            return RELAY_SKIPPED;
+        if (data[offset + pathBytes] == ownShortHash)
+            return RELAY_SKIPPED;
     }
 
-    if (len + PATH_HASH_SIZE > 255) return RELAY_SKIPPED;   // кадр не влезает в SX1262
+    if (len + PATH_HASH_SIZE > 255)
+        return RELAY_SKIPPED; // кадр не влезает в SX1262
 
     // Строим переиздаваемый кадр: тот же заголовок и тело, путь — исходный плюс наш хэш
     // в конце. Узел добавляет в путь первые два байта своего публичного ключа: тот же
@@ -203,9 +223,9 @@ int maybeQueueRelay(const uint8_t* data, int len) {
     uint8_t fwd[256];
     fwd[0] = data[0];
     fwd[1] = ((PATH_HASH_SIZE - 1) << 6) | (hop_count + 1);
-    memcpy(fwd + 2, data + 2, pathBytes);                                    // исходный путь
-    memcpy(fwd + 2 + pathBytes, bot_pub, PATH_HASH_SIZE);                    // наш хэш
-    memcpy(fwd + 2 + pathBytes + PATH_HASH_SIZE, data + 2 + pathBytes,       // тело
+    memcpy(fwd + 2, data + 2, pathBytes);                              // исходный путь
+    memcpy(fwd + 2 + pathBytes, bot_pub, PATH_HASH_SIZE);              // наш хэш
+    memcpy(fwd + 2 + pathBytes + PATH_HASH_SIZE, data + 2 + pathBytes, // тело
            len - (2 + pathBytes));
     int fwdLen = len + PATH_HASH_SIZE;
 
@@ -216,7 +236,10 @@ int maybeQueueRelay(const uint8_t* data, int len) {
     // дубликатами.
     int slot = -1;
     for (int i = 0; i < RELAY_QUEUE_MAX; i++) {
-        if (relayQueue[i].dueMs == 0) { slot = i; break; }
+        if (relayQueue[i].dueMs == 0) {
+            slot = i;
+            break;
+        }
     }
     if (slot < 0) {
         relayQueueDrops++;
@@ -226,13 +249,13 @@ int maybeQueueRelay(const uint8_t* data, int len) {
     }
 
     relayQueue[slot].dueMs = millis() + relayDelayMs(fwdLen);
-    if (relayQueue[slot].dueMs == 0) relayQueue[slot].dueMs = 1;   // 0 занято признаком «свободен»
+    if (relayQueue[slot].dueMs == 0)
+        relayQueue[slot].dueMs = 1; // 0 занято признаком «свободен»
     memcpy(relayQueue[slot].frame, fwd, fwdLen);
     relayQueue[slot].len = fwdLen;
     relayMarkQueued(hash);
 
-    Serial.printf("[RLY] type=%u hops=%u->%u, переиздание через %lu мс\n",
-                  payload_type, hop_count, hop_count + 1,
+    Serial.printf("[RLY] type=%u hops=%u->%u, переиздание через %lu мс\n", payload_type, hop_count, hop_count + 1,
                   (unsigned long)(relayQueue[slot].dueMs - millis()));
     return RELAY_QUEUED;
 }
@@ -253,12 +276,18 @@ void meshRelayTick() {
     int best = -1;
     long bestLate = -1;
     for (int i = 0; i < RELAY_QUEUE_MAX; i++) {
-        if (relayQueue[i].dueMs == 0) continue;
+        if (relayQueue[i].dueMs == 0)
+            continue;
         long late = (long)(now - relayQueue[i].dueMs);
-        if (late < 0) continue;                 // срок ещё не подошёл
-        if (late > bestLate) { bestLate = late; best = i; }
+        if (late < 0)
+            continue; // срок ещё не подошёл
+        if (late > bestLate) {
+            bestLate = late;
+            best = i;
+        }
     }
-    if (best < 0) return;
+    if (best < 0)
+        return;
     relayQueue[best].dueMs = 0;
 
     // Никакого hex-лога кадра: на 245-байтном кадре он стоит ~40 мс UART, и вся эта
@@ -268,10 +297,13 @@ void meshRelayTick() {
     txFrame(relayQueue[best].frame, relayQueue[best].len);
 }
 
-#else   // !FEATURE_RELAY — обычная сборка: функции пустые, линковке есть что звать.
-        // Это путь по умолчанию, а не аварийный: ретранслятором не должен быть никто.
-        // Заглушки нужны затем, чтобы radio_rx.cpp и главный цикл прошивки звали их без
-        // #if вокруг каждого вызова — условие живёт в одном месте, здесь.
-int maybeQueueRelay(const uint8_t*, int) { return RELAY_SKIPPED; }
-void meshRelayTick() {}
+#else // !FEATURE_RELAY — обычная сборка: функции пустые, линковке есть что звать.
+      // Это путь по умолчанию, а не аварийный: ретранслятором не должен быть никто.
+      // Заглушки нужны затем, чтобы radio_rx.cpp и главный цикл прошивки звали их без
+      // #if вокруг каждого вызова — условие живёт в одном месте, здесь.
+int maybeQueueRelay(const uint8_t *, int) {
+    return RELAY_SKIPPED;
+}
+void meshRelayTick() {
+}
 #endif
